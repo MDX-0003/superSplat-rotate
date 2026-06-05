@@ -9,3 +9,5 @@ docs
 .npmrc
 .cursor
 .idea
+*.png
+*.jpg

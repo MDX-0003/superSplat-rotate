@@ -8,9 +8,9 @@ const dist = path.join(root, 'dist');
 const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 const gtImageDir = process.env.SUPERSPLAT_GT_IMAGE_DIR ||
-    '/data/new_disk7/shenzhh/Dome_Dataset/MangoTv/1/data1_undistortion/images';
+    path.join(root, 'CameraData', '02', 'camera_06_2026-06-04-214336');
 const mangotvPly = process.env.SUPERSPLAT_MANGOTV_PLY ||
-    '/data/new_disk7/guochch/code/origin_3dgs/output/mangotv/point_cloud/iteration_30000/point_cloud.ply';
+    path.join(root, 'CameraData', '01', 'person3_Lite_3.ply');
 
 const types = new Map([
     ['.css', 'text/css; charset=utf-8'],

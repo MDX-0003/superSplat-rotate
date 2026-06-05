@@ -8,7 +8,7 @@ toward the center + a slerp blend of the two anchor orientations.
 
 Usage:
   python interpolate_cameras_circle.py
-  python interpolate_cameras_circle.py --total 300 --anchor1 0 --anchor2 22 --radius-scale 0.8
+  python tills/interpolate_cameras_circle.py --total 300 --radius-scale 0.85
 """
 import argparse
 import json
@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+from paths import project as proj_dir
 
 
 # ---------------------------------------------------------------------------
@@ -79,20 +79,21 @@ def main():
     parser = argparse.ArgumentParser(
         description="Circle interpolation with look-at rotations"
     )
+    parser.add_argument("--project", required=True,
+                        help="Project name under CameraData/")
     parser.add_argument("--max-index", type=int, default=44)
     parser.add_argument("--total", type=int, default=300)
-    parser.add_argument("--anchor1", type=int, default=0,
-                        help="Index (in original JSON) of first anchor keyframe")
-    parser.add_argument("--anchor2", type=int, default=22,
-                        help="Index (in original JSON) of second anchor keyframe")
+    parser.add_argument("--anchor-camera", type=str, default="006",
+                        help="Camera img_name to use as anchor (default: 006)")
     parser.add_argument("--input", type=str, default=None)
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--radius-scale", type=float, default=1.0,
                         help="Scale the ellipse radii (1.0 = original, >1 = wider orbit, <1 = tighter)")
     args = parser.parse_args()
 
-    input_path = Path(args.input) if args.input else SCRIPT_DIR / "cameras.json"
-    output_path = Path(args.output) if args.output else SCRIPT_DIR / "cameras_align.json"
+    proj = proj_dir(args.project)
+    input_path = Path(args.input) if args.input else proj / "cameras.json"
+    output_path = Path(args.output) if args.output else proj / "cameras_align.json"
 
     # ----- load ----------------------------------------------------------
     with open(input_path, "r") as f:
@@ -101,6 +102,18 @@ def main():
     total_loaded = len(data)
     data = data[:args.max_index + 1]
     print(f"Loaded {total_loaded} poses, keeping 0..{args.max_index} ({len(data)})")
+
+    # find the anchor camera by img_name
+    anchor_img = args.anchor_camera
+    anchor_idx = None
+    for d in data:
+        if d["img_name"] == anchor_img:
+            anchor_idx = d["id"]
+            break
+    if anchor_idx is None:
+        print(f"ERROR: camera with img_name='{anchor_img}' not found in input")
+        return
+    print(f"Anchor camera  : img_name={anchor_img}  id={anchor_idx}")
 
     # ----- extract -------------------------------------------------------
     positions = np.array([d["position"] for d in data])
@@ -116,25 +129,34 @@ def main():
     print(f"Fit radius      : {r_fit:.4f}")
     print(f"Plane normal    : [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
 
-    # ----- pick two anchors (by their original JSON index) ----------------
-    anchor_a = data[args.anchor1]
-    anchor_b = data[args.anchor2]
+    # ----- pick anchors: anchor camera + auto max-angular-distance mate ----
+    all_angles = []
+    for d in data:
+        v = np.array(d["position"]) - center
+        x, y = v @ u1, v @ u2
+        all_angles.append(float(np.arctan2(y, x)))
+
+    ang_a = all_angles[anchor_idx]
+    best_j, best_dist = -1, -1
+    for j, a in enumerate(all_angles):
+        d_forward = (a - ang_a) % (2 * np.pi)
+        d_back = (ang_a - a) % (2 * np.pi)
+        dist = min(d_forward, d_back)
+        if dist > best_dist:
+            best_dist = dist
+            best_j = j
+
+    anchor_a = data[anchor_idx]
+    anchor_b = data[best_j]
     p_a = np.array(anchor_a["position"])
     p_b = np.array(anchor_b["position"])
     r_a = float(np.linalg.norm(p_a - center))
     r_b = float(np.linalg.norm(p_b - center))
-    print(f"Anchor radii    : r1={r_a:.4f} (id={args.anchor1})  r2={r_b:.4f} (id={args.anchor2})")
+    print(f"Anchor A       : img_name={anchor_img}  id={anchor_idx}  r={r_a:.4f}  angle={ang_a:.4f}")
+    print(f"Anchor B (auto): id={best_j}  r={r_b:.4f}  angle={all_angles[best_j]:.4f}  "
+          f"gap={np.degrees(best_dist):.1f}°")
 
-    # compute anchor angles in the fitted plane
-    # project onto (u1,u2) and compute atan2
-    d_a = p_a - center
-    d_b = p_b - center
-    x_a, y_a = d_a @ u1, d_a @ u2
-    x_b, y_b = d_b @ u1, d_b @ u2
-    ang_a = float(np.arctan2(y_a, x_a))
-    ang_b = float(np.arctan2(y_b, x_b))
-
-    # unwrap so ang_b > ang_a and span ∈ (0, 2π]
+    ang_b = all_angles[best_j]
     while ang_b <= ang_a:
         ang_b += 2 * np.pi
     span = ang_b - ang_a
@@ -145,17 +167,9 @@ def main():
     # place the two anchors exactly at their angles (in output angle space)
     # output angle 0 → ang_a,  output angle (N-1) → ang_b (going the "long way")
     # Actually we want 300 uniform poses covering 0..2π, with anchors at their angles.
-    # Map: output i's world-angle = ang_a + (ang_b - ang_a) * i / (N - 1)
-    # This covers from anchor1 to anchor2 through the angular span.
-    # But we want all 2π covered. With 2 anchors at ang_a and ang_b,
-    # we use the SHORT span from ang_a to ang_b as the full circle.
-    # If the user's data has ~352°, wrap to 360° conceptually.
-    if span > np.pi:
-        full_span = 2 * np.pi
-    else:
-        full_span = span  # preserve exact angular span
-
-    sample_angles = np.linspace(ang_a, ang_a + full_span, N, endpoint=False)
+    # Always cover a full 360° circle — the two anchors define the ellipse
+    # geometry (radii, rotation delta) applied uniformly around 2π.
+    sample_angles = np.linspace(ang_a, ang_a + 2 * np.pi, N, endpoint=False)
     # ensure anchors land exactly at their positions
     sample_angles[0] = ang_a
     # find the closest sample to ang_b and pin it
@@ -256,12 +270,17 @@ def main():
         sample_w.append(w_a + t * (w_b - w_a))
         sample_h.append(h_a + t * (h_b - h_a))
 
+    # ----- reorder so anchor camera is at output index 0 ---------------
+    # the anchor is already at sample_angles[0] by construction, so roll=0
+    # (kept for compatibility — can be changed via --anchor-camera)
+    print(f"Output start    : anchor camera {anchor_img} at index 0")
+
     # ----- output --------------------------------------------------------
     output = []
     for i in range(N):
         output.append({
-            "id": i,
-            "img_name": f"circle_{i:04d}",
+            "id": i + 1,
+            "img_name": f"circle_{i + 1:04d}",
             "width": int(round(sample_w[i])),
             "height": int(round(sample_h[i])),
             "position": [round(float(v), 6) for v in sample_positions[i]],
@@ -275,7 +294,8 @@ def main():
         json.dump(output, f, indent=2)
 
     print(f"Output          : {len(output)} poses → {output_path}")
-    print(f"Anchors at idx  : 0 (angle {ang_a:.4f})  {idx_b} (angle {ang_b:.4f})")
+    print(f"Anchors         : id=0 → angle {ang_a:.4f}  "
+          f"id={idx_b} → angle {ang_b:.4f} (gap {np.degrees(best_dist):.1f}°)")
 
 
 if __name__ == "__main__":

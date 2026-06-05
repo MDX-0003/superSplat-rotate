@@ -1,14 +1,17 @@
 import fs from 'fs';
+import path from 'path';
 import { spawnSync } from 'child_process';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const host = process.env.SUPERSPLAT_VERIFY_URL || 'http://127.0.0.1:3000/';
 const camerasPath = process.env.SUPERSPLAT_CAMERAS_JSON ||
-    '/data/new_disk7/guochch/code/origin_3dgs/output/mangotv/cameras.json';
+    path.join(root, 'CameraData', '02', 'cameras.json');
 const gtImagePath = process.env.SUPERSPLAT_GT_IMAGE ||
-    '/data/new_disk7/shenzhh/Dome_Dataset/MangoTv/1/data1_undistortion/images/103-2026-05-30-162835 000.jpg';
-const screenshotPath = process.env.SUPERSPLAT_VERIFY_SCREENSHOT ||
-    '/tmp/supersplat-gt-container.png';
+    path.join(root, 'CameraData', '02', 'camera_06_2026-06-04-214336', '0001.jpg');
+const screenshotPath = process.env.SUPERSPLAT_VERIFY_SCREENSHOT || path.join(root, 'CameraData', 'screenshot.png');
 const nodePath = '/root/.npm/_npx/420ff84f11983ee5/node_modules';
 const require = createRequire(import.meta.url);
 

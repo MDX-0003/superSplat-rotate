@@ -1,0 +1,9 @@
+{
+  "project": "02",
+  "camera": 6,
+  "head": 64,
+  "tail": 161,
+  "total": 300,
+  "radius_scale": 1.0,
+  "source": "raw_frames"
+}
