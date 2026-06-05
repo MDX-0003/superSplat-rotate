@@ -1,0 +1,11 @@
+node_modules
+dist
+docs
+.codex
+.agents
+*.mp4
+*.mov
+.DS_Store
+.npmrc
+.cursor
+.idea
