@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -72,6 +73,8 @@ def main():
     parser.add_argument("--crf", type=int, default=6)
     parser.add_argument("--source", type=str, default="raw_frames",
                         help="Raw frames subfolder name")
+    parser.add_argument("--force", action="store_true",
+                        help="Overwrite existing outputs instead of skipping")
     args = parser.parse_args()
 
     proj = proj_dir(args.project)
@@ -101,15 +104,19 @@ def main():
         sys.exit(1)
 
     cameras_json = proj / "cameras.json"
+    if args.force and cameras_json.exists():
+        cameras_json.unlink()
     if not cameras_json.exists():
         step("1/6  colmap_bin_to_json",
              [python, str(SCRIPT_DIR / "colmap_bin_to_json.py"),
               "--project", args.project])
     else:
-        print(f"\n  SKIP Step 1: {cameras_json} already exists")
+        print(f"\n  SKIP Step 1: {cameras_json} already exists  (use --force to overwrite)")
 
     # ---- Step 2: extract anchor camera ---------------------------------
     anchor_dir = proj / "anchor_frames"
+    if args.force and anchor_dir.is_dir():
+        shutil.rmtree(anchor_dir)
     if not anchor_dir.is_dir() or not list(anchor_dir.glob("*.jpg")):
         step("2/6  extract_camera",
              [python, str(SCRIPT_DIR / "extract_camera.py"),
@@ -117,10 +124,12 @@ def main():
               "--camera", str(args.camera),
               "--source", args.source])
     else:
-        print(f"\n  SKIP Step 2: {anchor_dir} already populated")
+        print(f"\n  SKIP Step 2: {anchor_dir} already populated  (use --force to overwrite)")
 
     # ---- Step 3: circle interpolation -----------------------------------
     align_json = proj / "cameras_align.json"
+    if args.force and align_json.exists():
+        align_json.unlink()
     if not align_json.exists():
         step("3/6  interpolate_cameras_circle",
              [python, str(SCRIPT_DIR / "interpolate_cameras_circle.py"),
@@ -129,7 +138,7 @@ def main():
               "--total", str(args.total),
               "--radius-scale", str(args.radius_scale)])
     else:
-        print(f"\n  SKIP Step 3: {align_json} already exists")
+        print(f"\n  SKIP Step 3: {align_json} already exists  (use --force to overwrite)")
 
     # ---- Step 4: SuperSplat render (MANUAL) ----------------------------
     renders_dir = proj / "renders"

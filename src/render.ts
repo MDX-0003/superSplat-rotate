@@ -199,33 +199,33 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.renderOverlays = false;
                 scene.gizmoLayer.enabled = false;
                 scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+                scene.lockedRenderMode = true;
 
                 const total = poses.length;
+                const visibleSplats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
+
+                const sortAndWait = (splats: Splat[]) => {
+                    return Promise.all(splats.map((splat) => {
+                        return new Promise<void>((resolve) => {
+                            const { instance } = splat.entity.gsplat;
+                            instance.sorter.once('updated', resolve);
+                            instance.sort(scene.camera.mainCamera);
+                            setTimeout(resolve, 1000);
+                        });
+                    }));
+                };
 
                 for (let i = 0; i < total; i++) {
                     if (cancelled) break;
 
                     const pose = poses[i];
 
-                    // Attach sort-completion listeners BEFORE firing camera.setPose
-                    const visibleSplats = (scene.getElementsByType(ElementType.splat) as Splat[]).filter(splat => splat.visible);
-                    const sortWaitPromises = visibleSplats.map(splat =>
-                        new Promise<void>((resolve) => {
-                            splat.entity.gsplat.instance.sorter.once('updated', resolve);
-                            setTimeout(resolve, 1000);
-                        })
-                    );
-
-                    // Clear stale forceRender so postRender() catches THIS pose's frame
-                    scene.forceRender = false;
-
                     events.fire('camera.setPose', pose, 0);
-                    await Promise.all(sortWaitPromises);
+                    scene.camera.onUpdate(0);
+                    await sortAndWait(visibleSplats);
 
-                    // Ensure render targets stay at export resolution
-                    scene.camera.setTargetSizeOverride(width, height);
-
-                    scene.forceRender = true;
+                    // Render exactly one frame (lockedRenderMode skips scene-state diff)
+                    scene.lockedRender = true;
                     await postRender();
 
                     // Fresh buffer per iteration (avoids detached ArrayBuffer from PngCompressor worker)
@@ -257,6 +257,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 return !cancelled;
             } finally {
                 cancelHandler.off();
+                scene.lockedRenderMode = false;
                 scene.camera.endOffscreenMode();
                 scene.camera.renderOverlays = true;
                 scene.gizmoLayer.enabled = true;

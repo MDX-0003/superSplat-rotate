@@ -11,3 +11,4 @@ docs
 .idea
 *.png
 *.jpg
+CameraData/**/*.ply

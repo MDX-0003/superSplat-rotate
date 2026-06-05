@@ -31,7 +31,7 @@ CameraData/<project>/
 ## 一键运行
 
 ```bash
-python tills/run_pipeline.py --project <project> --camera 6 --head 64 --tail 161
+ python tills/run_pipeline.py --project 02 --camera 33 --head 64 --tail 161 --force
 ```
 
 | 参数 | 默认值 | 含义 |
