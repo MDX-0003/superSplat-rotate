@@ -186,6 +186,7 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
 
     if (json.length > 0) {
         events.fire('camera.clearImportedPoses');
+        events.fire('camera.clearPoses');
 
         // sort entries by trailing number if it exists
         const sorter = (a: any, b: any) => {
@@ -212,7 +213,7 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
                     fov = Math.max(fovX, fovY);
                 }
 
-                events.fire('camera.addImportedPose', {
+                const posePayload = {
                     name: pose.img_name ?? `${file.filename}_${i}`,
                     frame: i,
                     position,
@@ -225,9 +226,13 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
                         fx: pose.fx,
                         fy: pose.fy
                     } : undefined
-                });
+                };
+                events.fire('camera.addImportedPose', posePayload);
+                events.fire('camera.addPose', posePayload);
             }
         });
+
+        events.fire('timeline.setFrames', json.length);
     }
 };
 
@@ -271,6 +276,7 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
     const t = new Vec3();
 
     events.fire('camera.clearImportedPoses');
+    events.fire('camera.clearPoses');
 
     poses.forEach((pose, i) => {
         const { w, x, y, z, tx, ty, tz } = pose;
@@ -282,13 +288,17 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
         q.transformVector(Vec3.BACK, vec);
         vec.mulScalar(10).add(t);
 
-        events.fire('camera.addImportedPose', {
+        const posePayload = {
             name: pose.name,
             frame: i,
             position: new Vec3(-t.x, -t.y, t.z),
             target: new Vec3(-vec.x, -vec.y, vec.z)
-        });
+        };
+        events.fire('camera.addImportedPose', posePayload);
+        events.fire('camera.addPose', posePayload);
     });
+
+    events.fire('timeline.setFrames', poses.length);
 };
 
 // initialize file handler events

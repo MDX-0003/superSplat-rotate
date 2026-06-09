@@ -432,6 +432,10 @@ const registerCameraPosesEvents = (events: Events) => {
         }
     });
 
+    events.on('camera.clearPoses', () => {
+        track.clear();
+    });
+
     events.on('scene.clear', () => {
         importedPoses.length = 0;
         events.fire('camera.importedPosesChanged');
