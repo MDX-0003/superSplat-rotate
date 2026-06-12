@@ -160,6 +160,8 @@ const rotationQuat = new Quat();
 
 const transformPlyPosition = (p: Vec3) => new Vec3(-p.x, -p.y, p.z);
 
+let cameraImportSessionMode: 'gt' | 'timeline' | 'both' | null = null;
+
 const transformPlyRotation = (rotation: number[][]) => {
     // cameras.json stores a 3DGS camera-to-world matrix. Loaded PLY splats are
     // rotated 180 degrees around Z, so camera axes need the same world transform.
@@ -180,13 +182,16 @@ const transformPlyRotation = (rotation: number[][]) => {
 };
 
 // load inria camera poses from json file
-const loadCameraPoses = async (file: ImportFile, events: Events) => {
+const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 'timeline' | 'both' = 'both') => {
     const response = new Response(file.contents);
     const json = await response.json();
 
     if (json.length > 0) {
-        events.fire('camera.clearImportedPoses');
-        events.fire('camera.clearPoses');
+        const toGt = mode === 'gt' || mode === 'both';
+        const toTimeline = mode === 'timeline' || mode === 'both';
+
+        if (toGt) events.fire('camera.clearImportedPoses');
+        if (toTimeline) events.fire('camera.clearPoses');
 
         // sort entries by trailing number if it exists
         const sorter = (a: any, b: any) => {
@@ -227,12 +232,12 @@ const loadCameraPoses = async (file: ImportFile, events: Events) => {
                         fy: pose.fy
                     } : undefined
                 };
-                events.fire('camera.addImportedPose', posePayload);
-                events.fire('camera.addPose', posePayload);
+                if (toGt) events.fire('camera.addImportedPose', posePayload);
+                if (toTimeline) events.fire('camera.addPose', posePayload);
             }
         });
 
-        events.fire('timeline.setFrames', json.length);
+        if (toTimeline) events.fire('timeline.setFrames', json.length);
     }
 };
 
@@ -241,7 +246,7 @@ const removeExtension = (filename: string) => {
 };
 
 // https://colmap.github.io/format.html#images-txt
-const loadImagesTxt = async (file: ImportFile, events: Events) => {
+const loadImagesTxt = async (file: ImportFile, events: Events, mode: 'gt' | 'timeline' | 'both' = 'both') => {
     const response = new Response(file.contents);
     const text = await response.text();
 
@@ -275,8 +280,11 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
     const q = new Quat();
     const t = new Vec3();
 
-    events.fire('camera.clearImportedPoses');
-    events.fire('camera.clearPoses');
+    const toGt = mode === 'gt' || mode === 'both';
+    const toTimeline = mode === 'timeline' || mode === 'both';
+
+    if (toGt) events.fire('camera.clearImportedPoses');
+    if (toTimeline) events.fire('camera.clearPoses');
 
     poses.forEach((pose, i) => {
         const { w, x, y, z, tx, ty, tz } = pose;
@@ -294,11 +302,11 @@ const loadImagesTxt = async (file: ImportFile, events: Events) => {
             position: new Vec3(-t.x, -t.y, t.z),
             target: new Vec3(-vec.x, -vec.y, vec.z)
         };
-        events.fire('camera.addImportedPose', posePayload);
-        events.fire('camera.addPose', posePayload);
+        if (toGt) events.fire('camera.addImportedPose', posePayload);
+        if (toTimeline) events.fire('camera.addPose', posePayload);
     });
 
-    events.fire('timeline.setFrames', poses.length);
+    if (toTimeline) events.fire('timeline.setFrames', poses.length);
 };
 
 // initialize file handler events
@@ -384,6 +392,26 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 }
             }
 
+            // determine camera import mode for JSON/txt files
+            let importMode: 'gt' | 'timeline' | 'both' = 'both';
+            const hasCameraData = files.some(f => {
+                const fn = f.filename.toLowerCase();
+                return fn.endsWith('.json') || fn.endsWith('images.txt');
+            });
+
+            if (hasCameraData && !cameraImportSessionMode) {
+                const dialogResult = await events.invoke('show.cameraImportDialog') as { mode: string; remember: boolean } | null;
+                if (dialogResult === null) {
+                    return [];
+                }
+                importMode = dialogResult.mode as 'gt' | 'timeline' | 'both';
+                if (dialogResult.remember) {
+                    cameraImportSessionMode = dialogResult.mode as 'gt' | 'timeline' | 'both';
+                }
+            } else if (cameraImportSessionMode) {
+                importMode = cameraImportSessionMode;
+            }
+
             // handle multiple files as independent imports
             for (let i = 0; i < files.length; i++) {
                 const filename = filenames[i].toLowerCase();
@@ -397,10 +425,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                     if (model) result.push(model);
                 } else if (filename.endsWith('images.txt')) {
                     // load colmap frames
-                    await loadImagesTxt(files[i], events);
+                    await loadImagesTxt(files[i], events, importMode);
                 } else if (filename.endsWith('.json')) {
                     // load inria camera poses
-                    await loadCameraPoses(files[i], events);
+                    await loadCameraPoses(files[i], events, importMode);
                 }
             }
         }

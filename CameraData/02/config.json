@@ -1,9 +1,14 @@
 {
+  "mode": "v2-mp4",
   "project": "02",
-  "camera": 6,
-  "head": 64,
-  "tail": 161,
-  "total": 300,
-  "radius_scale": 1.0,
+  "gt_camera": "001",
+  "tail_gt_camera": "031",
+  "ue_seq": "E:\\Programs\\UE Project\\ProjectSplat\\Content\\SFM_camera_json\\Sq_SKNJ_H_2_Animation.json",
+  "head_segments": "cam001:1-64",
+  "tail_segments": "cam031:66-168",
+  "bridge_min_frames": 30,
+  "fps": 60,
+  "crf": 6,
+  "resolution": "3840x2160",
   "source": "raw_frames"
 }

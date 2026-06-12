@@ -1,6 +1,5 @@
 import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, MkvOutputFormat, MovOutputFormat, Mp4OutputFormat, Output, StreamTarget, WebMOutputFormat } from 'mediabunny';
 import { Color, path, Vec3 } from 'playcanvas';
-
 import { Pose } from './camera-poses';
 import { ElementType } from './element';
 import { Events } from './events';
@@ -31,6 +30,10 @@ type ImageSettings = {
     height: number;
     transparentBg: boolean;
     showDebug: boolean;
+    // optional: export all timeline frames as PNG sequence
+    sequence?: boolean;
+    startFrame?: number;
+    endFrame?: number;
 };
 
 type VideoSettings = {
@@ -274,6 +277,135 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             events.fire('progressEnd');
             events.fire('stopSpinner');
         }
+    });
+
+    events.function('render.imageSequence', async (imageSettings: ImageSettings) => {
+        const renderImpl = async () => {
+            events.fire('progressStart', localize('panel.render.render-sequence'), true);
+
+            let cancelled = false;
+            const cancelHandler = events.on('progressCancel', () => {
+                cancelled = true;
+            });
+
+            try {
+                const { startFrame = 0, endFrame = 0, width, height, transparentBg, showDebug } = imageSettings;
+                const total = endFrame - startFrame + 1;
+
+                scene.camera.startOffscreenMode(width, height);
+                scene.camera.renderOverlays = showDebug;
+                scene.gizmoLayer.enabled = false;
+                if (!transparentBg) {
+                    scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
+                }
+                scene.lockedRenderMode = true;
+
+                const last_pos = new Vec3(0, 0, 0);
+                const last_forward = new Vec3(1, 0, 0);
+
+                const sortAndWait = (splats: Splat[]) => {
+                    return Promise.all(splats.map((splat) => {
+                        return new Promise<void>((resolve) => {
+                            const { instance } = splat.entity.gsplat;
+                            instance.sorter.once('updated', resolve);
+                            instance.sort(scene.camera.mainCamera);
+                            setTimeout(resolve, 1000);
+                        });
+                    }));
+                };
+
+                const pngFiles: { name: string; data: ArrayBuffer }[] = [];
+
+                for (let frame = startFrame; frame <= endFrame; frame++) {
+                    if (cancelled) break;
+
+                    // fire timeline.time for camera animation interpolation
+                    events.fire('timeline.time', frame);
+
+                    // wait for PLY sequence if present
+                    const newSplat = await events.invoke('plysequence.setFrameAsync', frame) as Splat | null;
+
+                    scene.camera.onUpdate(0);
+
+                    if (newSplat) {
+                        await sortAndWait([newSplat]);
+                    } else {
+                        const pos = scene.camera.position;
+                        const forward = scene.camera.forward;
+                        if (!last_pos.equals(pos) || !last_forward.equals(forward)) {
+                            last_pos.copy(pos);
+                            last_forward.copy(forward);
+                            const splats = (scene.getElementsByType(ElementType.splat) as Splat[])
+                                .filter(splat => splat.visible);
+                            await sortAndWait(splats);
+                        }
+                    }
+
+                    scene.lockedRender = true;
+                    await postRender();
+
+                    // fresh buffer per iteration (PngCompressor transfers the ArrayBuffer)
+                    const data = new Uint8Array(width * height * 4);
+                    const { mainTarget, workTarget } = scene.camera;
+                    scene.dataProcessor.copyRt(mainTarget, workTarget);
+                    await workTarget.colorBuffer.read(0, 0, width, height, { data });
+
+                    // PNG compressor handles orientation — no Y-flip needed
+
+                    // compress to PNG
+                    if (!compressor) {
+                        compressor = new PngCompressor();
+                    }
+
+                    const arrayBuffer = await compressor.compress(
+                        new Uint32Array(data.buffer),
+                        width,
+                        height
+                    );
+
+                    pngFiles.push({
+                        name: `circle_${String(frame).padStart(4, '0')}.png`,
+                        data: arrayBuffer
+                    });
+
+                    events.fire('progressUpdate', {
+                        text: localize('panel.view-options.gt-camera.exporting-progress',
+                            { current: frame - startFrame + 1, total }),
+                        progress: total > 1 ? 100 * (frame - startFrame + 1) / total : 100
+                    });
+                }
+
+                // download all accumulated PNGs at once (avoids interleaving downloads
+                // with the render loop; browser queues them efficiently in parallel)
+                for (const { name, data } of pngFiles) {
+                    downloadFile(data, name);
+                }
+
+                return !cancelled;
+            } catch (error) {
+                await events.invoke('showPopup', {
+                    type: 'error',
+                    header: localize('panel.render.failed'),
+                    message: `'${(error as any).message ?? error}'`
+                });
+                return false;
+            } finally {
+                cancelHandler.off();
+                scene.camera.endOffscreenMode();
+                scene.camera.renderOverlays = true;
+                scene.gizmoLayer.enabled = true;
+                scene.camera.clearPass.setClearColor(nullClr);
+                scene.lockedRenderMode = false;
+                scene.forceRender = true;
+
+                events.fire('progressEnd');
+            }
+        };
+
+        if (navigator.locks) {
+            return navigator.locks.request('supersplat-image-sequence', renderImpl);
+        }
+        return renderImpl();
     });
 
     events.function('render.video', (videoSettings: VideoSettings, fileStream: FileSystemWritableFileStream) => {

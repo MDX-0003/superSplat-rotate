@@ -1,0 +1,12 @@
+{
+  "fps": 25,
+  "crf": 6,
+  "resolution": "3840x2160",
+  "segments": [
+    { "type": "real",  "camera": 1,  "start": 1,  "end": 74 },
+    { "type": "render", "seq": "seq_f075_c1_c32" },
+    { "type": "real",  "camera": 32, "start": 76, "end": 161 },
+    { "type": "render", "seq": "seq_f162_c32_c60" },
+    { "type": "real",  "camera": 60, "start": 163, "end": 239 }
+  ]
+}

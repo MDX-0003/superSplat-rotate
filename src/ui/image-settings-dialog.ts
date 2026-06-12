@@ -5,6 +5,11 @@ import { ImageSettings } from '../render';
 import { localize } from './localization';
 import sceneExport from './svg/export.svg';
 
+interface ImageSettingsResult extends ImageSettings {
+    startFrame?: number;
+    endFrame?: number;
+}
+
 const createSvg = (svgString: string, args = {}) => {
     const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));
     return new Element({
@@ -14,7 +19,7 @@ const createSvg = (svgString: string, args = {}) => {
 };
 
 class ImageSettingsDialog extends Container {
-    show: () => Promise<ImageSettings | null>;
+    show: (defaultSequence?: boolean) => Promise<ImageSettingsResult | null>;
     hide: () => void;
     destroy: () => void;
 
@@ -90,6 +95,36 @@ class ImageSettingsDialog extends Container {
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
 
+        // all timeline frames toggle
+
+        const sequenceLabel = new Label({ class: 'label', text: localize('popup.render-image.sequence') });
+        const sequenceBoolean = new BooleanInput({ class: 'boolean', value: false });
+        const sequenceRow = new Container({ class: 'row' });
+        sequenceRow.append(sequenceLabel);
+        sequenceRow.append(sequenceBoolean);
+
+        // frame range (shown only when sequence is on)
+
+        const frameRangeLabel = new Label({ class: 'label', text: localize('popup.render-image.frame-range') });
+        const startFrameInput = new NumericInput({
+            class: 'frame-range-input',
+            min: 0,
+            max: 9999,
+            precision: 0,
+            value: 0
+        });
+        const endFrameInput = new NumericInput({
+            class: 'frame-range-input',
+            min: 0,
+            max: 9999,
+            precision: 0,
+            value: 0
+        });
+        const frameRangeRow = new Container({ class: 'row', hidden: true });
+        frameRangeRow.append(frameRangeLabel);
+        frameRangeRow.append(startFrameInput);
+        frameRangeRow.append(endFrameInput);
+
         // content
 
         const content = new Container({ id: 'content' });
@@ -97,6 +132,8 @@ class ImageSettingsDialog extends Container {
         content.append(resolutionRow);
         content.append(transparentBgRow);
         content.append(showDebugRow);
+        content.append(sequenceRow);
+        content.append(frameRangeRow);
 
         // footer
 
@@ -154,6 +191,10 @@ class ImageSettingsDialog extends Container {
             }
         });
 
+        sequenceBoolean.on('change', () => {
+            frameRangeRow.hidden = !sequenceBoolean.value;
+        });
+
         // handle key bindings for enter and escape
 
         let onCancel: () => void;
@@ -173,14 +214,27 @@ class ImageSettingsDialog extends Container {
         // reset UI and configure for current state
         const reset = () => {
             updateResolution();
+
+            // default frame range from timeline
+            const timelineFrames = events.invoke('timeline.frames');
+            startFrameInput.value = 0;
+            startFrameInput.max = Math.max(0, timelineFrames - 1);
+            endFrameInput.value = Math.max(0, timelineFrames - 1);
+            endFrameInput.max = Math.max(0, timelineFrames - 1);
         };
 
         // function implementations
 
-        this.show = () => {
+        this.show = (defaultSequence = false) => {
             targetSize = events.invoke('targetSize');
 
             reset();
+
+            // pre-check sequence toggle if opened via "Image Sequence" menu
+            if (defaultSequence) {
+                sequenceBoolean.value = true;
+                frameRangeRow.hidden = false;
+            }
 
             this.hidden = false;
             document.addEventListener('keydown', keydown);
@@ -194,12 +248,18 @@ class ImageSettingsDialog extends Container {
                 onOK = () => {
                     const [width, height] = resolutionValue.value;
 
-                    const imageSettings = {
+                    const imageSettings: ImageSettingsResult = {
                         width,
                         height,
                         transparentBg: transparentBgBoolean.value,
-                        showDebug: showDebugBoolean.value
+                        showDebug: showDebugBoolean.value,
+                        sequence: sequenceBoolean.value
                     };
+
+                    if (sequenceBoolean.value) {
+                        imageSettings.startFrame = startFrameInput.value;
+                        imageSettings.endFrame = endFrameInput.value;
+                    }
 
                     resolve(imageSettings);
                 };

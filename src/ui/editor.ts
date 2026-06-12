@@ -8,6 +8,7 @@ import { BottomToolbar } from './bottom-toolbar';
 import { ColorPanel } from './color-panel';
 import { ExportPopup } from './export-popup';
 import { ImageSettingsDialog } from './image-settings-dialog';
+import { CameraImportDialog } from './camera-import-dialog';
 import { localize, localizeInit } from './localization';
 import { Menu } from './menu';
 import { ModeToggle } from './mode-toggle';
@@ -195,6 +196,9 @@ class EditorUI {
         // image settings
         const imageSettingsDialog = new ImageSettingsDialog(events);
 
+        // camera import dialog
+        const cameraImportDialog = new CameraImportDialog();
+
         // video settings
         const videoSettingsDialog = new VideoSettingsDialog(events);
 
@@ -205,6 +209,7 @@ class EditorUI {
         topContainer.append(exportPopup);
         topContainer.append(publishSettingsDialog);
         topContainer.append(imageSettingsDialog);
+        topContainer.append(cameraImportDialog);
         topContainer.append(videoSettingsDialog);
         topContainer.append(shortcutsPopup);
         topContainer.append(aboutPopup);
@@ -269,11 +274,27 @@ class EditorUI {
             }
         });
 
+        events.function('show.cameraImportDialog', () => {
+            return cameraImportDialog.show();
+        });
+
         events.function('show.imageSettingsDialog', async () => {
             const imageSettings = await imageSettingsDialog.show();
 
             if (imageSettings) {
-                await events.invoke('render.image', imageSettings);
+                if (imageSettings.sequence && imageSettings.startFrame !== undefined && imageSettings.endFrame !== undefined) {
+                    await events.invoke('render.imageSequence', imageSettings);
+                } else {
+                    await events.invoke('render.image', imageSettings);
+                }
+            }
+        });
+
+        events.function('show.imageSequenceDialog', async () => {
+            const imageSettings = await imageSettingsDialog.show(true);
+
+            if (imageSettings && imageSettings.startFrame !== undefined && imageSettings.endFrame !== undefined) {
+                await events.invoke('render.imageSequence', imageSettings);
             }
         });
 

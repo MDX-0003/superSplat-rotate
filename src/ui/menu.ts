@@ -260,6 +260,10 @@ class Menu extends Container {
             icon: createSvg(sceneExport),
             onSelect: async () => await events.invoke('show.imageSettingsDialog')
         }, {
+            text: localize('menu.render.image-sequence', { ellipsis: true }),
+            icon: createSvg(sceneExport),
+            onSelect: async () => await events.invoke('show.imageSequenceDialog')
+        }, {
             text: localize('menu.render.video', { ellipsis: true }),
             icon: createSvg(sceneExport),
             onSelect: async () => await events.invoke('show.videoSettingsDialog')

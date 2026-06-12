@@ -2,7 +2,7 @@
 Convert COLMAP cameras.bin + images.bin → cameras.json.
 
 Usage:
-  python tills/colmap_bin_to_json.py --project 02
+  python tills/colmap_bin_to_json.py --project 03
     reads  CameraData/02/colmap_bins/cameras.bin + images.bin
     writes CameraData/02/cameras.json
 """
