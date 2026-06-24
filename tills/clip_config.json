@@ -1,0 +1,10 @@
+{
+    "path": "CameraData/06",
+    "clip_percent": 0.05,
+    "denoise": true,
+    "max_index": 89,
+    "radius_scale": 1.0,
+    "height_up": 2,
+    "height_down": 0.05,
+    "denoise_min_points": 20
+}

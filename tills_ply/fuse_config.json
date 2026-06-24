@@ -1,0 +1,12 @@
+{
+    "path": "CameraData/07",
+    "max_index": 89,
+    "radius_scale": 1,
+    "height_up": 2,
+    "height_down": 0.5,
+    "bias": true,
+    "bias_margin": 0.35,
+    "bias_radius_percentile": 30,
+    "indices": [1,2],
+    "output_subfix": ""
+}

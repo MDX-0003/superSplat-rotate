@@ -1,0 +1,70 @@
+{
+    "_doc": "Named parameter presets for ply_pipeline.py.  Each preset holds fuse + clip params for one project folder.",
+    "_usage": "python tills_ply/ply_pipeline.py --preset <name> [--step fuse|clip] [--force]",
+    "presets": {
+        "08-0623测试": {
+            "path": "CameraData/08",
+            "description": "",
+            "fuse": {
+                "max_index": 89,
+                "radius_scale": 1,
+                "height_up": 2,
+                "height_down": 0.5,
+                "bias": true,
+                "bias_margin": 0.35,
+                "bias_radius_percentile": 30,
+                "indices": [
+                    1,
+                    2
+                ],
+                "output_subfix": ""
+            },
+            "clip": {
+                "clip_percent": 0.0,
+                "denoise": true,
+                "max_index": 89,
+                "radius_scale": 1.0,
+                "height_up": 2,
+                "height_down": 0.05,
+                "denoise_min_points": 20,
+                "ring_delete": true,
+                "ring_outer_delta": 0.2,
+                "ring_inner_delta": 0.3,
+                "ring_height_up": 1.5,
+                "ring_height_down": 0.3
+            }
+        },
+        "09-0624测试": {
+            "path": "CameraData/09",
+            "description": "",
+            "fuse": {
+                "max_index": 89,
+                "radius_scale": 1,
+                "height_up": 2,
+                "height_down": 0.5,
+                "bias": true,
+                "bias_margin": 0.35,
+                "bias_radius_percentile": 30,
+                "indices": [
+                    1,
+                    2
+                ],
+                "output_subfix": ""
+            },
+            "clip": {
+                "clip_percent": 0.0,
+                "denoise": true,
+                "max_index": 89,
+                "radius_scale": 1.0,
+                "height_up": 2,
+                "height_down": 0.05,
+                "denoise_min_points": 20,
+                "ring_delete": true,
+                "ring_outer_delta": 0.2,
+                "ring_inner_delta": 0.3,
+                "ring_height_up": 1.5,
+                "ring_height_down": 0.3
+            }
+        }
+    }
+}

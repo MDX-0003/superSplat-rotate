@@ -8,6 +8,7 @@ toward the center + a slerp blend of the two anchor orientations.
 
 Usage:
   python interpolate_cameras_circle.py
+  python tills/interpolate_cameras_circle.py --project 06 --radius-scale 0.6
   python tills/interpolate_cameras_circle.py --total 300 --radius-scale 0.85
 """
 import argparse
@@ -288,6 +289,7 @@ def main():
                          for row in sample_rots[i]],
             "fy": round(float(sample_fy[i]), 6),
             "fx": round(float(sample_fx[i]), 6),
+            "fov_x":80.0,
         })
 
     with open(output_path, "w") as f:

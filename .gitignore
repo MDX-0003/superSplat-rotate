@@ -13,3 +13,5 @@ docs
 *.jpg
 CameraData/*
 SequenceData/*
+__pycache__/
+*.pyc

@@ -210,12 +210,32 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
                 // Use fixed offset along Z-axis direction instead of variable dot product
                 vec.copy(z).mulScalar(10).add(position);
 
-                // compute max FOV from intrinsics (vertical or horizontal, whichever is larger)
-                let fov = 60;
+                // use explicit fov_x (degrees) if provided, otherwise compute from intrinsics
+                let fov = pose.fov_x ?? 60;
+                let poseIntrinsics: { width: number, height: number, fx: number, fy: number } | undefined;
                 if (pose.fx && pose.fy && pose.width && pose.height) {
-                    const fovX = 2 * Math.atan(pose.width / (2 * pose.fx)) * (180 / Math.PI);
-                    const fovY = 2 * Math.atan(pose.height / (2 * pose.fy)) * (180 / Math.PI);
-                    fov = Math.max(fovX, fovY);
+                    if (pose.fov_x) {
+                        // fov_x is horizontal FOV in degrees; derive fx/fy so
+                        // the calibrated projection matrix matches fov_x
+                        const fovRad = pose.fov_x * Math.PI / 180;
+                        const derivedFocal = pose.width / (2 * Math.tan(fovRad / 2));
+                        poseIntrinsics = {
+                            width: pose.width,
+                            height: pose.height,
+                            fx: derivedFocal,
+                            fy: derivedFocal
+                        };
+                    } else {
+                        const fovX = 2 * Math.atan(pose.width / (2 * pose.fx)) * (180 / Math.PI);
+                        const fovY = 2 * Math.atan(pose.height / (2 * pose.fy)) * (180 / Math.PI);
+                        fov = Math.max(fovX, fovY);
+                        poseIntrinsics = {
+                            width: pose.width,
+                            height: pose.height,
+                            fx: pose.fx,
+                            fy: pose.fy
+                        };
+                    }
                 }
 
                 const posePayload = {
@@ -225,12 +245,7 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
                     target: vec.clone(),
                     fov,
                     rotation,
-                    intrinsics: pose.fx && pose.fy && pose.width && pose.height ? {
-                        width: pose.width,
-                        height: pose.height,
-                        fx: pose.fx,
-                        fy: pose.fy
-                    } : undefined
+                    intrinsics: poseIntrinsics
                 };
                 if (toGt) events.fire('camera.addImportedPose', posePayload);
                 if (toTimeline) events.fire('camera.addPose', posePayload);

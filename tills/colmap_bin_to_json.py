@@ -144,7 +144,8 @@ def fov2focal(fov, pixels):
 
 
 def camera_to_json(idx, image, camera):
-    if camera.model == "SIMPLE_PINHOLE":
+    if camera.model in ("SIMPLE_PINHOLE", "SIMPLE_RADIAL"):
+        # SIMPLE_RADIAL: params = [f, cx, cy, k] — use f, ignore distortion
         focal_length_x = camera.params[0]
         fovy = focal2fov(focal_length_x, camera.height)
         fovx = focal2fov(focal_length_x, camera.width)
@@ -156,7 +157,7 @@ def camera_to_json(idx, image, camera):
     else:
         raise ValueError(
             "Unsupported COLMAP camera model '{}'. This project expects "
-            "undistorted SIMPLE_PINHOLE or PINHOLE cameras.".format(camera.model)
+            "undistorted SIMPLE_PINHOLE, SIMPLE_RADIAL, or PINHOLE cameras.".format(camera.model)
         )
 
     r = np.transpose(qvec2rotmat(image.qvec))
