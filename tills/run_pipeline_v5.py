@@ -45,7 +45,7 @@ VIDEO_BITRATE = 41_472_000
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
-def step(name, cmd, shell=False, force_clean=None):
+def step(name, cmd, shell=False, force_clean=None, cwd=None):
     """Print a step header, optionally clean a previous output, then run a subprocess."""
     print(f"\n{'='*60}")
     print(f"  STEP: {name}")
@@ -53,6 +53,8 @@ def step(name, cmd, shell=False, force_clean=None):
         print(f"  CMD : {' '.join(str(c) for c in cmd)}")
     else:
         print(f"  CMD : {cmd}")
+    if cwd:
+        print(f"  CWD : {cwd}")
     print(f"{'='*60}")
 
     if force_clean and os.path.exists(force_clean):
@@ -62,12 +64,15 @@ def step(name, cmd, shell=False, force_clean=None):
             os.remove(force_clean)
         print(f"  (force) cleaned: {force_clean}")
 
+    kwargs = {}
+    if cwd:
+        kwargs["cwd"] = cwd
     if shell:
-        result = subprocess.run(cmd, shell=True)
+        result = subprocess.run(cmd, shell=True, **kwargs)
     elif isinstance(cmd, list):
-        result = subprocess.run([str(c) for c in cmd])
+        result = subprocess.run([str(c) for c in cmd], **kwargs)
     else:
-        result = subprocess.run(cmd, shell=False)
+        result = subprocess.run(cmd, shell=False, **kwargs)
 
     if result.returncode != 0:
         print(f"\n  FAILED at: {name}")
@@ -97,18 +102,23 @@ def derive_seq_name(segments, seg_idx):
 
 
 def validate_config(cfg):
-    """Validate pipeline.json structure.  Exits on critical errors, warns on soft issues."""
+    """Validate pipeline.json structure.
+
+    Supports two formats:
+      - New:  {project, preset, output, jsons_path?, litegs_path?}
+      - Old:  {project, max_index, interpolate, fuse, clip, output}
+    """
     errors = []
+    if "project" not in cfg:
+        errors.append("Missing 'project'")
+    if "output" not in cfg or "segments" not in cfg.get("output", {}):
+        errors.append("Missing 'output.segments'")
 
-    required_top = ["project", "max_index", "interpolate", "fuse", "clip", "output"]
-    for k in required_top:
-        if k not in cfg:
-            errors.append(f"Missing top-level key: '{k}'")
-
-    if "output" in cfg:
-        out = cfg["output"]
-        if "segments" not in out:
-            errors.append("Missing 'output.segments'")
+    # new format requires 'preset'; old format requires max_index+fuse+clip
+    has_new = "preset" in cfg
+    has_old = "max_index" in cfg or "clip" in cfg
+    if not has_new and not has_old:
+        errors.append("Missing 'preset' (new format) or 'max_index'/'clip' (old format)")
 
     if errors:
         for e in errors:
@@ -116,70 +126,124 @@ def validate_config(cfg):
         sys.exit(1)
 
 
-# ── PLY step argument builders ─────────────────────────────────────────────────
+# ── preset loading & clip args ──────────────────────────────────────────────────
 
-def build_interpolate_args(cfg):
-    """Build CLI args for tills_ply/interpolate_cameras_circle.py."""
-    ip = cfg["interpolate"]
-    proj_path = f"CameraData/{cfg['project']}"
-    return [
-        sys.executable, str(TILLS_PLY_DIR / "interpolate_cameras_circle.py"),
-        "--path", proj_path,
-        "--max-index", str(cfg["max_index"]),
-        "--total", str(ip.get("total", 300)),
-        "--anchor-camera", str(ip.get("anchor_camera", "006")),
-        "--radius-scale", str(ip.get("radius_scale", 1.0)),
-    ]
+def load_preset(name):
+    """Load a named preset from tills_ply/presets.json."""
+    presets_file = ROOT / "tills_ply" / "presets.json"
+    with open(presets_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if name not in data.get("presets", {}):
+        print(f"ERROR: preset '{name}' not found in {presets_file}")
+        sys.exit(1)
+    return data["presets"][name]
 
 
-def build_fuse_args(cfg):
-    """Build CLI args for tills_ply/fuse_ply.py."""
-    f = cfg["fuse"]
-    proj_path = f"CameraData/{cfg['project']}"
-    args = [
-        sys.executable, str(TILLS_PLY_DIR / "fuse_ply.py"),
-        "--path", proj_path,
-        "--max-index", str(cfg["max_index"]),
-        "--radius-scale", str(f.get("radius_scale", 1.0)),
-        "--height-up", str(f["height_up"]),
-        "--height-down", str(f["height_down"]),
-    ]
-    if f.get("bias"):
-        args.append("--bias")
-        args.extend(["--bias-margin", str(f.get("bias_margin", 0.05))])
-        args.extend(["--bias-radius-percentile", str(f.get("bias_radius_percentile", 50))])
-    if f.get("output_subfix"):
-        args.extend(["--output-subfix", str(f["output_subfix"])])
-    if f.get("indices"):
-        args.extend(["--indices", " ".join(str(i) for i in f["indices"])])
-    return args
-
-
-def build_clip_args(cfg):
-    """Build CLI args for tills_ply/clip_ply.py."""
-    c = cfg["clip"]
-    proj_path = f"CameraData/{cfg['project']}"
+def build_clip_args(preset):
+    """Build CLI args for tills_ply/clip_ply.py from a preset dict."""
+    c = preset["clip"]
     args = [
         sys.executable, str(TILLS_PLY_DIR / "clip_ply.py"),
-        "--path", proj_path,
+        "--path", preset["path"],
         "--clip-percent", str(c.get("clip_percent", 10.0)),
     ]
     has_circle = c.get("denoise") or c.get("ring_delete")
-    if has_circle:
-        args.extend(["--max-index", str(cfg["max_index"])])
+    max_index = preset.get("max_index") or c.get("max_index")
+    if has_circle and max_index is not None:
+        args.extend(["--max-index", str(max_index)])
         args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
     if c.get("denoise"):
         args.append("--denoise")
-        args.extend(["--height-up", str(c["height_up"])])
-        args.extend(["--height-down", str(c["height_down"])])
+        # voxel-based denoise (new style)
+        if "denoise_voxel_size" in c:
+            args.extend(["--denoise-voxel-size", str(c["denoise_voxel_size"])])
+        # cylinder-based denoise (old style)
+        if "height_up" in c:
+            args.extend(["--height-up", str(c["height_up"])])
+        if "height_down" in c:
+            args.extend(["--height-down", str(c["height_down"])])
         args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 30))])
     if c.get("ring_delete"):
         args.append("--ring-delete")
         args.extend(["--ring-outer-delta", str(c.get("ring_outer_delta", 0.5))])
         args.extend(["--ring-inner-delta", str(c.get("ring_inner_delta", 0.3))])
-        args.extend(["--ring-height-up", str(c["ring_height_up"])])
-        args.extend(["--ring-height-down", str(c["ring_height_down"])])
+        if "ring_height_up" in c:
+            args.extend(["--ring-height-up", str(c["ring_height_up"])])
+        if "ring_height_down" in c:
+            args.extend(["--ring-height-down", str(c["ring_height_down"])])
     return args
+
+
+# ── LiteGS training step ────────────────────────────────────────────────────────
+
+def parse_train_vars(date_str):
+    """'2026-06-25-162636' → ('0625', '162636')"""
+    parts = date_str.split("-")
+    if len(parts) != 4:
+        print(f"ERROR: cannot parse date_str '{date_str}' (expected YYYY-MM-DD-HHMMSS)")
+        sys.exit(1)
+    return parts[1] + parts[2], parts[3]
+
+
+def run_litegs_train(cfg, preset, segments, force):
+    """T1-T5: extract train images → copy to LiteGS → batch_run → copy PLY → clip."""
+    litegs_path = Path(cfg["litegs_path"])
+    if not litegs_path.is_dir():
+        print(f"ERROR: litegs_path not found: {litegs_path}")
+        sys.exit(1)
+
+    proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
+
+    # source discovery (needed for extract_train_images)
+    source_config = cfg["output"].get("source", "raw_images")
+    source_dir, prefix, padding = discover_source(proj_dir, source_config)
+
+    # T1: extract train images
+    extract_train_images(segments, source_dir, prefix, padding, proj_dir, force)
+
+    # derive date_strs from train_ranges
+    date_str = extract_date_from_prefix(prefix)
+    sub_dir, frame_id = parse_train_vars(date_str)
+
+    src_train = proj_dir / "Train_imgs" / date_str
+    if not src_train.is_dir():
+        print(f"  No train images at {src_train} — skipping training")
+        return
+
+    # T2: copy Train_imgs → LiteGSWin/data/<sub_dir>/<date_str>
+    dst_frame = litegs_path / "data" / sub_dir / date_str
+    if force or not dst_frame.exists():
+        print(f"\n  T2: 复制训练素材 → {dst_frame}")
+        shutil.copytree(src_train, dst_frame, dirs_exist_ok=True)
+    else:
+        print(f"\n  T2: SKIP — {dst_frame} already exists")
+
+    # T3: run batch_run.py
+    ply_src = litegs_path / "results" / sub_dir / f"{sub_dir}-{frame_id}.ply"
+    if force or not ply_src.exists():
+        step(f"T3  LiteGS batch_run --sub_dir {sub_dir}",
+             f'uv run python batch_run.py --sub_dir {sub_dir}',
+             shell=True, cwd=str(litegs_path))
+    else:
+        print(f"\n  T3: SKIP — {ply_src} already exists")
+
+    # T4: copy result PLY → CameraData/<project>/
+    ply_dst = proj_dir / f"{sub_dir}-{frame_id}.ply"
+    if force or not ply_dst.exists():
+        if ply_src.exists():
+            shutil.copy2(ply_src, ply_dst)
+            print(f"  T4: 复制 PLY → {ply_dst}")
+        else:
+            print(f"  T4: ERROR — source PLY not found: {ply_src}")
+            sys.exit(1)
+    else:
+        print(f"  T4: SKIP — {ply_dst} already exists")
+
+    # T5: clip
+    clip_out = proj_dir.parent / f"{proj_dir.name}-clip"
+    if force and clip_out.is_dir():
+        shutil.rmtree(clip_out)
+    step(f"T5  clip (preset: {cfg['preset']})", build_clip_args(preset))
 
 
 # ── PLY selection ──────────────────────────────────────────────────────────────
@@ -1000,13 +1064,12 @@ async def async_main(args, cfg):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Pipeline v5: unified PLY processing + SuperSplat rendering"
+        description="Pipeline v5: LiteGS training + SuperSplat automation"
     )
     parser.add_argument("--config", required=True,
-                        help="Path to pipeline.json (e.g. CameraData/08/pipeline.json)")
+                        help="Path to pipeline.json (e.g. CameraData/01/pipeline.json)")
     parser.add_argument("--steps", type=str, default=None,
-                        help="Comma-separated steps: ply,render,interpolate,fuse,clip "
-                             "(default: all)")
+                        help="Comma-separated steps: train,clip,render (default: all)")
     parser.add_argument("--force", action="store_true",
                         help="Re-generate all intermediate outputs")
     parser.add_argument("--debug", action="store_true",
@@ -1028,20 +1091,31 @@ def main():
 
     proj_name = cfg["project"]
     proj_dir = (ROOT / f"CameraData/{proj_name}").resolve()
-    python = sys.executable
+
+    # load preset (new format) or build compatibility dict (old format)
+    if "preset" in cfg:
+        preset = load_preset(cfg["preset"])
+    else:
+        # old format — wrap inline params as a mock preset for build_clip_args
+        preset = {
+            "path": f"CameraData/{proj_name}",
+            "max_index": cfg["max_index"],
+            "clip": cfg["clip"],
+        }
 
     # determine which steps to run
+    valid_steps = {"train", "clip", "render"}
     if args.steps:
         step_filter = set(s.strip() for s in args.steps.split(","))
-        # "ply" expands to interpolate, fuse, clip
-        if "ply" in step_filter:
-            step_filter.discard("ply")
-            step_filter.update(["interpolate", "fuse", "clip"])
+        unknown = step_filter - valid_steps
+        if unknown:
+            print(f"ERROR: unknown steps: {unknown}  (valid: {', '.join(sorted(valid_steps))})")
+            sys.exit(1)
     else:
-        step_filter = None  # run all
+        step_filter = valid_steps  # run all
 
     def should_run(name):
-        return step_filter is None or name in step_filter
+        return name in step_filter
 
     # ── print summary ──────────────────────────────────────────────────────
     segments = cfg["output"]["segments"]
@@ -1055,7 +1129,9 @@ def main():
     crf = cfg["output"].get("crf", 6)
 
     print(f"Pipeline v5 — project: {proj_name}")
-    print(f"  Steps: {step_filter or 'all'}")
+    print(f"  Steps: {step_filter}")
+    if "preset" in cfg:
+        print(f"  Preset: {cfg['preset']}")
     print(f"  Timeline: {len(segments)} segments  "
           f"({real_count} real, {len(render_names)} render)")
     print(f"  Render MP4s: {', '.join(render_names)}")
@@ -1069,57 +1145,40 @@ def main():
     if output_frames_dir.is_dir():
         shutil.rmtree(output_frames_dir)
 
-    # ── Step 1: interpolate ────────────────────────────────────────────────
-    if should_run("interpolate"):
-        output_json = proj_dir / "cameras_align.json"
-        clean = str(output_json) if (args.force and output_json.exists()) else None
-        step("1  interpolate → cameras_align.json",
-             build_interpolate_args(cfg), force_clean=clean)
+    # ── Step: train ────────────────────────────────────────────────────────
+    if should_run("train"):
+        if "litegs_path" not in cfg:
+            print("ERROR: --steps train requires 'litegs_path' in pipeline.json")
+            sys.exit(1)
+        run_litegs_train(cfg, preset, segments, args.force)
 
-    # ── Step 2: fuse ───────────────────────────────────────────────────────
-    if should_run("fuse"):
-        clean = None
-        if args.force and proj_dir.is_dir():
-            combines = list(proj_dir.glob("*combine*.ply"))
-            if combines:
-                clean = str(combines[0])
-                for c in combines[1:]:
-                    os.remove(c)
-        step("2  fuse → combine PLYs",
-             build_fuse_args(cfg), force_clean=clean)
-
-    # ── Step 3: clip ───────────────────────────────────────────────────────
+    # ── Step: clip ─────────────────────────────────────────────────────────
     if should_run("clip"):
         clip_out = proj_dir.parent / f"{proj_name}-clip"
         clean = str(clip_out) if (args.force and clip_out.exists()) else None
-        step("3  clip → XX-clip/*.ply",
-             build_clip_args(cfg), force_clean=clean)
+        step("clip → XX-clip/*.ply", build_clip_args(preset), force_clean=clean)
 
-    # ── Steps 4-7: Playwright automation ───────────────────────────────────
+    # ── Step: render (Playwright automation) ───────────────────────────────
     if should_run("render"):
         render_names = asyncio.run(async_main(args, cfg))
     else:
-        # still need to know render names for concat
+        # still compute render names
         segments = cfg["output"]["segments"]
         render_names = []
         for i, seg in enumerate(segments):
             if seg["type"] == "render":
                 render_names.append(derive_seq_name(segments, i))
 
-    # ── Step 8: video pipeline (extract → encode → concat) ─────────────────
-    if not should_run("render"):
-        # if only running ply steps, skip video pipeline
-        if step_filter and step_filter <= {"interpolate", "fuse", "clip"}:
-            print(f"\n  PLY processing complete.  Skipping video pipeline.")
+    # ── concat ─────────────────────────────────────────────────────────────
+    if not should_run("render") and not should_run("train"):
+        # only doing standalone clip → done
+        if step_filter == {"clip"}:
+            print(f"\n  Clip complete.")
             return
 
-    # source discovery
+    # source discovery for concat
     source_config = cfg["output"].get("source", "raw_images")
     source_dir, prefix, padding = discover_source(proj_dir, source_config)
-
-    # extract train images
-    extract_train_images(segments, source_dir, prefix, padding,
-                         proj_dir, args.force)
 
     # extract real frames
     anchor_dir = proj_dir / "anchor_frames"
@@ -1140,7 +1199,6 @@ def main():
         if not mp4_path.exists():
             print(f"\n  WARNING: {mp4_path} not found")
             print(f"  Run with --steps render first, or place the file manually")
-            # don't exit — user may want to continue with manual placement
 
     # real JPGs → MP4
     if real_count > 0:

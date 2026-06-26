@@ -84,7 +84,7 @@
             "fuse": {
                 "radius_scale": 0.8,
                 "height_up": 3,
-                "height_down": 0.15,
+                "height_down": 0.5,
                 "bias": true,
                 "bias_margin": 0.35,
                 "bias_radius_percentile": 15,
