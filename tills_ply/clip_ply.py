@@ -4,11 +4,14 @@ Clip (remove) the largest N% of Gaussian splats from each PLY file, ranked by
 volume proxy = scale_0 + scale_1 + scale_2 (sum of log-scales, equivalent to
 SuperSplat's exp(s0)*exp(s1)*exp(s2) ranking since exp is monotonic).
 
-Optionally (--denoise), also remove isolated floater Gaussians inside a
-cylinder fitted to camera positions — same circle-fit + cylinder logic as
-fuse_ply.py.  Uses grid-based region-growing from the density peak to identify
-the person cluster; points inside the cylinder but outside the grown region
-are discarded as artefacts.
+Optionally (--denoise), remove isolated floater Gaussians using 3D connected-
+components analysis.  The entire point cloud is voxelised; all 26-connected
+components except those that together account for ≥ 99.5 % of the points are
+discarded as artefacts.  This preserves the main body (person + ground, which
+connect through the feet in 3D) while removing sparse floaters at any height.
+
+Optionally (--ring-delete), remove points in a ring-shaped region between two
+concentric circles fitted to camera positions.
 
 Outputs processed PLYs to {path}-clip/, keeping original filenames.
 
@@ -16,19 +19,26 @@ Usage:
   # volume-clip only
   python tills_ply/clip_ply.py
 
-  # volume-clip + cylinder denoise
+  # volume-clip + 3D denoise
   python tills_ply/clip_ply.py --denoise
+
+  # volume-clip + denoise + ring delete
+  python tills_ply/clip_ply.py --denoise --ring-delete
 
 Config file (JSON) — all keys optional; CLI args take precedence:
   {
     "path": "CameraData/05",
     "clip_percent": 10,
     "denoise": true,
+    "denoise_voxel_size": 0.30,
+    "denoise_min_points": 50,
+    "ring_delete": true,
     "max_index": 89,
     "radius_scale": 0.5,
-    "height_up": 0.6,
-    "height_down": 0.5,
-    "denoise_min_points": 30
+    "ring_height_up": 1.5,
+    "ring_height_down": 0.3,
+    "ring_outer_delta": 0.2,
+    "ring_inner_delta": 0.3
   }
 
 ---- 参数说明 ------------------------------------------------------------
@@ -37,16 +47,28 @@ Config file (JSON) — all keys optional; CLI args take precedence:
                       (等价 SuperSplat 的 exp(s0)*exp(s1)*exp(s2))。
                       设为 0 则不删除任何点（纯拷贝）。
 
-  -- 以下参数仅在 --denoise 时生效 ----------------------------------------
-  denoise             启用圆柱区域内孤立伪影剔除 (bool, 默认 false)。
+  -- 以下参数在 --denoise 时生效 -----------------------------------------
+  denoise             启用 3D 连通分量去噪 (bool, 默认 false)。
+                      不需要 cameras.json, 不依赖圆拟合。
+  denoise_voxel_size  3D 体素边长 (米, 默认 0.15)。体素越小越精细,
+                      但太大可能导致人物和地面在 3D 中断连。
+  denoise_min_points  连通分量保留的最低点数 (默认 50)。
+                      分量按大小降序排列, 点数 < 此阈值的全部删除。
+                      值越小越保守(删更少), 越大越激进(删更多)。
+
+  -- 以下参数仅在 --ring-delete 时生效 -----------------------------------
+  ring_delete         启用环形区域点删除 (bool, 默认 false)。
                       开启后需要 cameras.json 存在。
-  max_index           拟合圆所用的相机范围 id=0..max_index (从0开始,包含max_index)。
-  radius_scale        拟合圆半径缩放系数 (<1 收紧, >1 放宽)。典型值 0.3~1.0。
-  height_up/height_down
-                      圆柱沿拟合平面法向量的上下高度(米)。
-  denoise_min_points  网格 region-growing 的最低点数阈值 (默认 30)。
-                      一个 0.15m×0.15m 的 cell 内点数 ≥ 此值才被纳入人物区域。
-                      值越小越宽松(保留更多), 越大越激进(剔除更多)。
+  max_index           拟合圆所用的相机范围 id=0..max_index。
+  radius_scale        拟合圆半径缩放系数。典型值 0.3~1.0。
+  ring_outer_delta    外环扩张量 (米, 默认 0.5)。
+  ring_inner_delta    内环收缩量 (米, 默认 0.3)。
+  ring_height_up/down 环形区域沿平面法向量的上下高度 (米)。
+
+  -- 以下参数已废弃 (向后兼容, 不再生效) --------------------------------
+  height_up / height_down / denoise_min_points
+                      旧版 cylinder denoise 的参数, 新版 3D 连通分量
+                      去噪不再使用。保留在 config 中不会报错。
 -----------------------------------------------------------------------
 """
 import argparse
@@ -86,76 +108,90 @@ def load_config(explicit_path=None):
 
 
 # ---------------------------------------------------------------------------
-# cylinder denoise: grid-based region-growing from density peak
+# 3D connected-components denoise
 # ---------------------------------------------------------------------------
-def cylinder_denoise(verts, center, normal, u1, u2, effective_r,
-                     height_up, height_down, min_points, grid_cell=0.15):
-    """Remove isolated floater points inside the cylinder.
-    Grid-bins cylinder points, finds the density-peak cell, then region-grows
-    from it across 8-neighbor cells.  Points in the grown region are kept;
-    points inside the cylinder but outside the grown region are discarded.
-    Points outside the cylinder are left untouched.
-    Returns (filtered_verts, n_removed)."""
-    shifted = verts[:, :3] - center
-    pts_2d = np.column_stack([shifted @ u1, shifted @ u2])
-    signed_dist = shifted @ normal
-    radial = np.linalg.norm(pts_2d, axis=1)
 
-    in_cyl = (radial <= effective_r) & (signed_dist >= -height_down) & (signed_dist <= height_up)
-    cyl_indices = np.where(in_cyl)[0]
+def _denoise_components(verts, voxel_size=0.15, min_points=50):
+    """Remove isolated floater Gaussians via 3D connected components.
 
-    if len(cyl_indices) < min_points:
+    The point cloud is voxelised at *voxel_size* resolution.  26-connected
+    components are discovered by BFS.  Components with fewer than *min_points*
+    points are discarded as floaters / artefacts; all larger components are
+    kept intact.
+
+    Because the person's feet and the ground surface occupy adjacent (or the
+    same) 3D voxels, they naturally form one large connected component —
+    unlike the old 2D cylinder method which lost the connection in projection.
+    Sparse floaters at any height form their own tiny components and are
+    removed regardless of their spatial location.
+
+    Returns (filtered_verts, n_removed).
+    """
+    xyz = verts[:, :3]
+    n_total = xyz.shape[0]
+
+    # ---- voxelize -------------------------------------------------------
+    mins = xyz.min(axis=0)
+    voxel_idx = np.floor((xyz - mins) / voxel_size).astype(np.int32)  # (N, 3)
+
+    # Build voxel → point-indices map
+    voxel_to_pts = {}
+    for i in range(n_total):
+        key = (int(voxel_idx[i, 0]), int(voxel_idx[i, 1]), int(voxel_idx[i, 2]))
+        if key in voxel_to_pts:
+            voxel_to_pts[key].append(i)
+        else:
+            voxel_to_pts[key] = [i]
+
+    n_voxels = len(voxel_to_pts)
+    if n_voxels <= 1:
         return verts, 0
 
-    cyl_2d = pts_2d[cyl_indices]
+    # ---- 26-connected components via BFS --------------------------------
+    visited = set()
+    components = []                     # list of lists of point indices
 
-    # ---- grid bin ----
-    mins = np.min(cyl_2d, axis=0) - grid_cell
-    maxs = np.max(cyl_2d, axis=0) + grid_cell
-    nx = max(1, int(np.ceil((maxs[0] - mins[0]) / grid_cell)))
-    ny = max(1, int(np.ceil((maxs[1] - mins[1]) / grid_cell)))
-
-    ix = np.clip(np.floor((cyl_2d[:, 0] - mins[0]) / grid_cell).astype(np.int32), 0, nx - 1)
-    iy = np.clip(np.floor((cyl_2d[:, 1] - mins[1]) / grid_cell).astype(np.int32), 0, ny - 1)
-    flat = ix * ny + iy
-    counts = np.bincount(flat, minlength=nx * ny)
-
-    # ---- density peak ----
-    peak_flat = int(np.argmax(counts))
-    if counts[peak_flat] < min_points:
-        return verts, 0
-
-    # ---- 8-neighbor region-growing ----
-    visited = np.zeros(nx * ny, dtype=bool)
-    in_cluster = np.zeros(nx * ny, dtype=bool)
-    queue = [peak_flat]
-    visited[peak_flat] = True
-
-    while queue:
-        cell = queue.pop()
-        if counts[cell] < min_points:
+    for seed in voxel_to_pts:
+        if seed in visited:
             continue
-        in_cluster[cell] = True
-        cx, cy = cell // ny, cell % ny
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == 0 and dy == 0:
-                    continue
-                nx_c, ny_c = cx + dx, cy + dy
-                if 0 <= nx_c < nx and 0 <= ny_c < ny:
-                    nf = nx_c * ny + ny_c
-                    if not visited[nf]:
-                        visited[nf] = True
-                        queue.append(nf)
 
-    # ---- map back: keep cylinder points that land in grown cells ----
-    cyl_keep = in_cluster[flat]
-    n_removed = int((~cyl_keep).sum())
+        # BFS from this seed
+        comp_pts = []
+        queue = [seed]
+        visited.add(seed)
 
-    final_mask = np.ones(len(verts), dtype=bool)
-    final_mask[cyl_indices] = cyl_keep
+        while queue:
+            v = queue.pop()
+            comp_pts.extend(voxel_to_pts[v])
 
-    return verts[final_mask], n_removed
+            vx, vy, vz = v
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        if dx == 0 and dy == 0 and dz == 0:
+                            continue
+                        nb = (vx + dx, vy + dy, vz + dz)
+                        if nb in voxel_to_pts and nb not in visited:
+                            visited.add(nb)
+                            queue.append(nb)
+
+        components.append(comp_pts)
+
+    if len(components) <= 1:
+        return verts, 0
+
+    # ---- discard components smaller than min_points ---------------------
+    components.sort(key=len, reverse=True)
+    keep_mask = np.zeros(n_total, dtype=bool)
+    n_kept_comps = 0
+    for comp in components:
+        if len(comp) < min_points:
+            break
+        keep_mask[comp] = True
+        n_kept_comps += 1
+
+    n_removed = n_total - int(keep_mask.sum())
+    return verts[keep_mask], n_removed
 
 
 # ---------------------------------------------------------------------------
@@ -214,22 +250,24 @@ def main():
                         help="Remove the top X%% of GS points by volume (default: 10)")
     parser.add_argument("--denoise", action="store_true",
                         default=cfg.get("denoise", False),
-                        help="Enable cylinder-based isolated floater removal")
+                        help="Enable 3D connected-components floater removal")
+    parser.add_argument("--denoise-voxel-size", type=float,
+                        default=cfg.get("denoise_voxel_size", 0.30),
+                        help="[denoise] 3D voxel size in metres (default: 0.15)")
+    parser.add_argument("--denoise-min-points", type=int,
+                        default=cfg.get("denoise_min_points", 50),
+                        help="[denoise] Components with fewer points than this are removed (default: 50)")
     parser.add_argument("--max-index", type=int,
                         default=cfg.get("max_index"),
-                        help="[denoise] Cameras id=0..max_index for circle fitting")
+                        help="[ring-delete] Cameras id=0..max_index for circle fitting")
     parser.add_argument("--radius-scale", type=float,
                         default=cfg.get("radius_scale", 1.0),
-                        help="[denoise] Scale the fitted circle radius (default: 1.0)")
+                        help="[ring-delete] Scale the fitted circle radius (default: 1.0)")
+    # -- legacy params (ignored; kept for backward compat with old configs) --
     parser.add_argument("--height-up", type=float,
-                        default=cfg.get("height_up"),
-                        help="[denoise] Cylinder height above fitted plane (m)")
+                        default=cfg.get("height_up"))
     parser.add_argument("--height-down", type=float,
-                        default=cfg.get("height_down"),
-                        help="[denoise] Cylinder height below fitted plane (m)")
-    parser.add_argument("--denoise-min-points", type=int,
-                        default=cfg.get("denoise_min_points", 30),
-                        help="[denoise] Min points per grid cell for region-growing (default: 30)")
+                        default=cfg.get("height_down"))
     parser.add_argument("--ring-delete", action="store_true",
                         default=cfg.get("ring_delete", False),
                         help="Enable ring-region point deletion between two concentric circles")
@@ -274,13 +312,13 @@ def main():
     out_dir = proj_dir.parent / f"{proj_dir.name}-clip"
     os.makedirs(out_dir, exist_ok=True)
 
-    # ----- cylinder setup (for denoise / ring-delete) -------------------------
+    # ----- circle setup (only for ring-delete) ------------------------------
     center = normal = u1 = u2 = None
-    effective_r = height_up = height_down = None
+    effective_r = None
 
-    if args.denoise or args.ring_delete:
+    if args.ring_delete:
         if args.max_index is None:
-            print("ERROR: --denoise/--ring-delete requires --max-index")
+            print("ERROR: --ring-delete requires --max-index")
             sys.exit(1)
 
         cameras_path = proj_dir / "cameras.json"
@@ -303,24 +341,18 @@ def main():
         print(f"  Circle center  : [{center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f}]")
         print(f"  Fit radius     : {r_fit:.4f}  (scaled: {effective_r:.4f})")
 
-        if args.denoise:
-            if args.height_up is None or args.height_down is None:
-                print("ERROR: --denoise requires --height-up and --height-down")
-                sys.exit(1)
-            height_up = args.height_up
-            height_down = args.height_down
-            print(f"  Denoise        : [-{height_down:.4f}, +{height_up:.4f}] along normal")
-            print(f"  Region-grow    : min {args.denoise_min_points} pts/cell")
+        ring_outer = effective_r + args.ring_outer_delta
+        ring_inner = effective_r - args.ring_inner_delta
+        if ring_inner <= 0:
+            print(f"ERROR: ring_inner_delta ({args.ring_inner_delta}) makes inner radius <= 0 "
+                  f"(effective_r={effective_r:.4f}, ring_inner={ring_inner:.4f})")
+            sys.exit(1)
+        print(f"  Ring delete    : inner={ring_inner:.4f}  outer={ring_outer:.4f}")
+        print(f"  Ring height    : [-{args.ring_height_down:.4f}, +{args.ring_height_up:.4f}]")
 
-        if args.ring_delete:
-            ring_outer = effective_r + args.ring_outer_delta
-            ring_inner = effective_r - args.ring_inner_delta
-            if ring_inner <= 0:
-                print(f"ERROR: ring_inner_delta ({args.ring_inner_delta}) makes inner radius <= 0 "
-                      f"(effective_r={effective_r:.4f}, ring_inner={ring_inner:.4f})")
-                sys.exit(1)
-            print(f"  Ring delete    : inner={ring_inner:.4f}  outer={ring_outer:.4f}")
-            print(f"  Ring height    : [-{args.ring_height_down:.4f}, +{args.ring_height_up:.4f}]")
+    if args.denoise:
+        print(f"  Denoise        : 3D components  voxel={args.denoise_voxel_size:.2f}m  "
+              f"min_points={args.denoise_min_points}")
 
     # ----- discover PLY files ----------------------------------------------
     plys_dir = proj_dir / "plys"
@@ -381,9 +413,11 @@ def main():
         # ----- denoise (optional) ------------------------------------------
         n_denoised = 0
         if args.denoise:
-            clipped, n_denoised = cylinder_denoise(
-                clipped, center, normal, u1, u2, effective_r,
-                height_up, height_down, args.denoise_min_points)
+            clipped, n_denoised = _denoise_components(
+                clipped,
+                voxel_size=args.denoise_voxel_size,
+                min_points=args.denoise_min_points,
+            )
 
         # ----- ring delete (optional) -------------------------------------
         n_ring = 0

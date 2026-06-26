@@ -4,14 +4,16 @@ Fuse selected PLY point clouds using a cylindrical region defined by a circle
 fitted to camera positions.
 
 - All points from the "main" PLY (first user selection) are kept in full.
-- Points from other selected PLYs are filtered: only those inside the cylinder
-  (projected radial distance ≤ scaled fit radius, and signed height along the
-  plane normal within [--height-down, --height-up]) are retained.
+- Points from other selected PLYs are filtered using adaptive ground-surface
+  detection: the cylinder's radial bound and upper height bound act as hard
+  cutoffs, while the lower bound (ground side) uses a grid-based local-minimum
+  algorithm that removes ONLY the ground surface while preserving foot/ankle
+  points that sit at a similar height.
   camera index consider in circle[0,max_index]
 
 Usage:
   # CLI only
-  python tills_ply/fuse_ply.py --path CameraData/04 --max-index 89 --height-up 0.6 --height-down 0.5 --radius-scale 0.5 --bias
+  python tills_ply/fuse_ply.py --path CameraData/04 --max-index 89 --height-up 2 --height-down 0.5 --radius-scale 0.5 --bias
 
   # with config file (auto-discovered or explicit)
   python tills_ply/fuse_ply.py
@@ -22,7 +24,7 @@ Config file (JSON) — all keys optional; CLI args take precedence:
     "path": "CameraData/04",
     "max_index": 89,
     "radius_scale": 0.5,
-    "height_up": 0.6,
+    "height_up": 2,
     "height_down": 0.5,
     "bias": true,
     "bias_margin": 0.5,
@@ -36,10 +38,12 @@ Config file (JSON) — all keys optional; CLI args take precedence:
                       这些相机应围绕场景中心大致排成一个圆。
   radius_scale        对拟合圆半径的缩放系数。 <1 收紧圆柱,只保留更靠近圆心
                       的点; >1 放宽。典型值 0.3~1.0。
-  height_up/height_down
-                      圆柱沿拟合平面法向量的上下高度(米)。法向量由 SVD 给出,
-                      指向场景"上方"未必是世界 Z 轴。调整这两个值可裁剪掉
-                      地面上方/下方的杂物。
+  height_up           圆柱沿拟合平面法向量上方的保留高度(米)。法向量由 SVD 给出,
+                      指向场景"上方"未必是世界 Z 轴。人物身高约 2m,建议设 2~3。
+  height_down         地面侧搜索范围(米)。signed_dist < -height_down 的点无条件
+                      删除(安全底板); signed_dist 在 [-height_down, height_up]
+                      范围内的点由自适应网格算法识别地面表面并精准切除。
+                      典型值 0.3~0.5。越小则地面检测的搜索空间越小。
   bias                是否启用人物重叠分离。开启后,脚本会找出每个 PLY 在拟合
                       平面上的密度峰值(网格 bin + argmax),隔离人物核心点
                       (峰值周围 0.5m),比较核心质心之间的 overlap,对重合的
@@ -55,6 +59,22 @@ Config file (JSON) — all keys optional; CLI args take precedence:
   output_subfix       输出文件名的后缀。为空则自动取所有参与融合的 index 拼接
                       (如 indices=[1,2] → ...combine_1-2.ply)；显式指定则使用该值。
                       用于区分不同参数组合的产物。
+
+---- 自适应地面检测原理 --------------------------------------------------
+  旧的 height_down 硬阈值无法区分地面 GS 点和脚部 GS 点,因为两者的
+  signed_dist 在拟合平面附近重叠。新算法利用"地面是每个 2D 网格单元中
+  最底层点"这一几何特征:
+
+    1. 将待过滤 PLY 的点投影到拟合平面 → (u1, u2) 坐标
+    2. 在 2D 平面上划分网格 (默认 0.1m)
+    3. 每个网格取 signed_dist 最小值作为"局部地面高度"
+    4. signed_dist 距局部地面高度 ≤ 3cm 的点 → 地面表面 → 删除
+    5. 高于局部地面的点 → 人物/物体 → 保留
+
+  这保证了脚部点(虽然 signed_dist 很小,但在其网格中它不是最低的那层)
+  不会被错误移除。
+
+  网格精度和容忍带可作为模块常量 GROUND_CELL_SIZE / GROUND_EPS 调整。
 -----------------------------------------------------------------------
 """
 import argparse
@@ -106,6 +126,220 @@ def longest_common_prefix(strings):
             if not prefix:
                 return ""
     return prefix
+
+
+# ---------------------------------------------------------------------------
+# adaptive ground-surface filter (grid-based local-minimum detection)
+# ---------------------------------------------------------------------------
+
+# Grid resolution for the 2D projection plane (metres).
+# Smaller = finer ground discrimination; 0.10 is a good default for outdoor scenes.
+_GROUND_CELL_SIZE = 0.10
+
+# Tolerance band above the local cell minimum (metres).
+# Points within this distance of the cell's lowest point are classified as
+# ground surface.  0.03 works well for typical 3DGS reconstruction noise.
+_GROUND_EPS = 0.03
+
+# Phase 2: cross-PLY residual ground suppression.
+# After Phase 1 removes ground within each non-main PLY, Phase 2 checks
+# surviving points against the MAIN PLY's person footprint: if a non-main
+# point sits at the main PLY's ground level in a cell where the main PLY
+# has person points, it is removed.  This prevents residual ground from
+# piling up directly under the person's feet.
+_CROSS_GROUND_EPS = 0.05        # tolerance for "at main's ground level" (m)
+_PERSON_ABOVE_GROUND = 0.15     # min height above local ground → "person" (m)
+
+
+def _filter_ground_adaptive(verts, center, normal, u1, u2,
+                            effective_r, height_up, height_down):
+    """Filter a non-main PLY: remove ground-surface points adaptively.
+
+    Uses a grid-based local-minimum algorithm in the 2D projection plane.
+    For each grid cell the point with the smallest signed distance to the
+    plane defines the "local ground level"; any point within _GROUND_EPS of
+    that level is treated as ground surface and removed.
+
+    Hard constraints (applied before grid analysis):
+      * radial distance must be <= effective_r (cylinder wall)
+      * signed_dist must be <= height_up (ceiling)
+      * signed_dist must be >= -height_down (safety floor — points below
+        this are unconditionally discarded)
+
+    Returns (kept_verts, stats_dict).
+    """
+    xyz = verts[:, :3]
+    signed_dist = (xyz - center) @ normal                      # (N,)
+    proj = xyz - np.outer(signed_dist, normal)
+    radial = np.linalg.norm(proj - center, axis=1)             # (N,)
+
+    # -- geometric hard filters -------------------------------------------
+    in_cylinder = radial <= effective_r
+    below_ceiling = signed_dist <= height_up
+    above_safety = signed_dist >= -height_down
+    geo_mask = in_cylinder & below_ceiling & above_safety      # passes hard filters
+
+    n_radial_cut = int((~in_cylinder).sum())
+    n_ceiling_cut = int((in_cylinder & ~below_ceiling).sum())
+    n_safety_cut = int((in_cylinder & below_ceiling & ~above_safety).sum())
+
+    # -- grid-based ground-surface detection ------------------------------
+    candidates_idx = np.where(geo_mask)[0]
+
+    if len(candidates_idx) < 100:
+        # Too few points — fall back to pure geometric filter.
+        kept = verts[geo_mask]
+        return kept, {
+            "total": verts.shape[0], "kept": kept.shape[0],
+            "ground_removed": 0, "radial_cut": n_radial_cut,
+            "ceiling_cut": n_ceiling_cut, "safety_cut": n_safety_cut,
+        }
+
+    candidates_xyz = xyz[candidates_idx]
+    candidates_sd = signed_dist[candidates_idx]
+
+    # Project candidates to the 2D plane
+    shifted = candidates_xyz - center
+    coords_2d = np.column_stack([shifted @ u1, shifted @ u2])  # (K, 2)
+
+    # Build 2D grid
+    cs = _GROUND_CELL_SIZE
+    mins = coords_2d.min(axis=0) - cs
+    maxs = coords_2d.max(axis=0) + cs
+    nx = max(1, int(np.ceil((maxs[0] - mins[0]) / cs)))
+    ny = max(1, int(np.ceil((maxs[1] - mins[1]) / cs)))
+
+    ix = np.clip(
+        np.floor((coords_2d[:, 0] - mins[0]) / cs).astype(np.int32), 0, nx - 1)
+    iy = np.clip(
+        np.floor((coords_2d[:, 1] - mins[1]) / cs).astype(np.int32), 0, ny - 1)
+    cell_flat = ix * ny + iy                                    # (K,) cell index
+
+    # Per-cell minimum signed distance — the "local ground level"
+    n_cells = nx * ny
+    cell_min_sd = np.full(n_cells, np.inf, dtype=np.float32)
+    np.minimum.at(cell_min_sd, cell_flat, candidates_sd.astype(np.float32))
+
+    # Cell occupancy: only classify points as ground when the cell has enough
+    # neighbours to give the "local minimum" concept meaning.  In sparse cells
+    # (< 3 pts) every point would trivially be the minimum — skip those cells.
+    cell_counts = np.bincount(cell_flat, minlength=n_cells)
+    _MIN_CELL_PTS = 3
+    cell_valid = cell_counts >= _MIN_CELL_PTS
+
+    # Points within _GROUND_EPS of the cell minimum AND in a dense enough cell
+    local_min = cell_min_sd[cell_flat]                          # (K,)
+    is_ground_candidate = (
+        ((candidates_sd - local_min) <= _GROUND_EPS) &
+        cell_valid[cell_flat]
+    )
+
+    # Map back to full point cloud
+    ground_mask = np.zeros(verts.shape[0], dtype=bool)
+    ground_mask[candidates_idx[is_ground_candidate]] = True
+
+    n_ground = int(ground_mask.sum())
+
+    # Final keep mask
+    keep_mask = geo_mask & ~ground_mask
+    kept = verts[keep_mask]
+
+    return kept, {
+        "total": verts.shape[0], "kept": kept.shape[0],
+        "ground_removed": n_ground, "radial_cut": n_radial_cut,
+        "ceiling_cut": n_ceiling_cut, "safety_cut": n_safety_cut,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: cross-PLY residual ground suppression
+# ---------------------------------------------------------------------------
+
+def _cross_ply_suppress(main_xyz, filtered_others, center, normal, u1, u2):
+    """Remove residual ground points from non-main PLYs in cells where the
+    main PLY has a person standing.
+
+    Builds a 2D reference map from the main PLY:
+      - main_ground[cell]  : per-cell minimum signed_dist (ground height)
+      - main_person[cell]  : True when the cell contains points at least
+                             _PERSON_ABOVE_GROUND above the local ground
+
+    For each non-main PLY (already filtered by Phase 1), a surviving point
+    is removed when ALL of these hold:
+      1. It falls in a cell where main_person is True.
+      2. Its signed_dist is within _CROSS_GROUND_EPS of main_ground[cell].
+
+    This catches ground points that Phase 1 missed and that sit directly
+    under the main PLY's person, where they would cause the most occlusion.
+    """
+    cs = _GROUND_CELL_SIZE       # reuse same grid resolution as Phase 1
+    cross_eps = _CROSS_GROUND_EPS
+    person_above = _PERSON_ABOVE_GROUND
+
+    # ---- build main PLY reference map --------------------------------
+    main_sd = (main_xyz - center) @ normal
+    shifted = main_xyz - center
+    coords_2d = np.column_stack([shifted @ u1, shifted @ u2])
+
+    mins = coords_2d.min(axis=0) - cs
+    maxs = coords_2d.max(axis=0) + cs
+    nx = max(1, int(np.ceil((maxs[0] - mins[0]) / cs)))
+    ny = max(1, int(np.ceil((maxs[1] - mins[1]) / cs)))
+
+    ix = np.clip(np.floor((coords_2d[:, 0] - mins[0]) / cs).astype(np.int32), 0, nx - 1)
+    iy = np.clip(np.floor((coords_2d[:, 1] - mins[1]) / cs).astype(np.int32), 0, ny - 1)
+    cell_flat = ix * ny + iy
+    n_cells = nx * ny
+
+    # Per-cell ground height
+    main_ground = np.full(n_cells, np.inf, dtype=np.float32)
+    np.minimum.at(main_ground, cell_flat, main_sd.astype(np.float32))
+
+    # Per-cell maximum height (for person-above-ground check)
+    main_max_sd = np.full(n_cells, -np.inf, dtype=np.float32)
+    np.maximum.at(main_max_sd, cell_flat, main_sd.astype(np.float32))
+
+    # Person present when max > ground + threshold AND ground is known
+    main_person = (main_max_sd > main_ground + person_above) & (main_ground < np.inf)
+
+    n_person_cells = int(main_person.sum())
+    print(f"\n  Phase 2: main PLY reference map  "
+          f"grid={nx}x{ny}  person_cells={n_person_cells}  "
+          f"cross_eps={cross_eps:.2f}m  person_above={person_above:.2f}m")
+
+    # ---- filter each non-main PLY ------------------------------------
+    result = []
+    for verts, ply_label in filtered_others:
+        xyz = verts[:, :3]
+        sd_nm = (xyz - center) @ normal
+        shifted_nm = xyz - center
+        coords_nm = np.column_stack([shifted_nm @ u1, shifted_nm @ u2])
+
+        # Map to main grid (don't clip — detect out-of-bounds separately)
+        ix_raw = np.floor((coords_nm[:, 0] - mins[0]) / cs).astype(np.int32)
+        iy_raw = np.floor((coords_nm[:, 1] - mins[1]) / cs).astype(np.int32)
+        in_bounds = (ix_raw >= 0) & (ix_raw < nx) & (iy_raw >= 0) & (iy_raw < ny)
+
+        ix_nm = np.clip(ix_raw, 0, nx - 1)
+        iy_nm = np.clip(iy_raw, 0, ny - 1)
+        cell_nm = ix_nm * ny + iy_nm
+
+        # Residual ground: in a person cell AND at main's ground level
+        is_residual = (
+            in_bounds &
+            main_person[cell_nm] &
+            (np.abs(sd_nm - main_ground[cell_nm]) <= cross_eps)
+        )
+
+        n_removed = int(is_residual.sum())
+        kept = verts[~is_residual]
+
+        print(f"  Phase 2 [{ply_label}]: removed {n_removed} pts  "
+              f"({kept.shape[0]} kept)")
+
+        result.append((kept, ply_label))
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +480,10 @@ def main():
     parser.add_argument("--height-down", type=float,
                         required=("height_down" not in cfg),
                         default=cfg.get("height_down"),
-                        help="Cylinder height below the fitted plane, opposite the plane normal")
+                        help="Ground-side search range (m). Points below -height_down are "
+                             "unconditionally removed; within [-height_down, height_up] the "
+                             "adaptive grid algorithm isolates and removes the ground surface. "
+                             "Typical: 0.3–0.5")
     parser.add_argument("--bias", action="store_true",
                         default=cfg.get("bias", False),
                         help="Enable centroid-based overlap correction for non-main PLYs")
@@ -371,25 +608,31 @@ def main():
     header_lines, properties, main_verts = read_ply(str(main_path))
     print(f"  {main_verts.shape[0]} points (all kept)")
 
+    if other:
+        print(f"  Ground strategy  : adaptive grid (Plan A)")
+
     filtered_others = []
     for ply_path, ply_label in other:
         print(f"Reading: {ply_path.name} ...")
         _, _, verts = read_ply(str(ply_path))
-        xyz = verts[:, :3]
 
-        signed_dist = (xyz - center) @ normal
-        proj = xyz - np.outer(signed_dist, normal)
-        radial = np.linalg.norm(proj - center, axis=1)
-
-        mask = (
-            (radial <= effective_r) &
-            (signed_dist >= -args.height_down) &
-            (signed_dist <= args.height_up)
+        kept, stats = _filter_ground_adaptive(
+            verts, center, normal, u1, u2,
+            effective_r, args.height_up, args.height_down,
         )
-        kept = verts[mask]
+
         filtered_others.append((kept, ply_label))
-        pct = 100.0 * kept.shape[0] / verts.shape[0] if verts.shape[0] else 0.0
-        print(f"  {verts.shape[0]} points -> {kept.shape[0]} kept ({pct:.1f}%)")
+        pct = 100.0 * stats["kept"] / stats["total"] if stats["total"] else 0.0
+        print(f"  {stats['total']} points -> {stats['kept']} kept ({pct:.1f}%)  "
+              f"[ground:{stats['ground_removed']} radial:{stats['radial_cut']} "
+              f"ceiling:{stats['ceiling_cut']} safety:{stats['safety_cut']}]")
+
+    # ----- Phase 2: cross-PLY residual ground suppression -------------------
+    if filtered_others:
+        filtered_others = _cross_ply_suppress(
+            main_verts[:, :3], filtered_others,
+            center, normal, u1, u2,
+        )
 
     # ----- bias correction (optional) --------------------------------------
     if args.bias and filtered_others:

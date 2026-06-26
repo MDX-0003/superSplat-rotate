@@ -160,7 +160,7 @@ const rotationQuat = new Quat();
 
 const transformPlyPosition = (p: Vec3) => new Vec3(-p.x, -p.y, p.z);
 
-let cameraImportSessionMode: 'gt' | 'timeline' | 'both' | null = null;
+let cameraImportSessionMode: 'gt' | 'timeline' | 'both' | null = 'both';
 
 const transformPlyRotation = (rotation: number[][]) => {
     // cameras.json stores a 3DGS camera-to-world matrix. Loaded PLY splats are

@@ -271,6 +271,7 @@ class TimelinePanel extends Container {
                 { v: 6, t: '6 fps' },
                 { v: 12, t: '12 fps' },
                 { v: 24, t: '24 fps' },
+                { v: 25, t: '25 fps' },
                 { v: 30, t: '30 fps' },
                 { v: 60, t: '60 fps' }
             ]

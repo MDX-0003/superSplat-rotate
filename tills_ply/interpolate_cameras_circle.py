@@ -7,18 +7,19 @@ interpolated between the two anchors, and rotations derived from a look-at
 toward the center + a slerp blend of the two anchor orientations.
 
 Usage:
-  python interpolate_cameras_circle.py
-  python tills/interpolate_cameras_circle.py --project 08 --max-index 89  --radius-scale 0.6
-  python tills/interpolate_cameras_circle.py --total 300 --radius-scale 0.85
+  # via project name (standalone — reads cameras.json from CameraData/<project>)
+  python tills_ply/interpolate_cameras_circle.py --project 08 --max-index 89 --radius-scale 0.6
+
+  # via direct path (used by ply_pipeline.py)
+  python tills_ply/interpolate_cameras_circle.py --path CameraData/08 --max-index 89 --radius-scale 0.6
 """
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
-
-from paths import project as proj_dir
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +81,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="Circle interpolation with look-at rotations"
     )
-    parser.add_argument("--project", required=True,
-                        help="Project name under CameraData/")
+    parser.add_argument("--project",
+                        help="Project name under CameraData/ (standalone use)")
+    parser.add_argument("--path",
+                        help="Direct path to project directory (e.g. CameraData/08)")
     parser.add_argument("--max-index", type=int, default=44)
     parser.add_argument("--total", type=int, default=300)
     parser.add_argument("--anchor-camera", type=str, default="006",
@@ -92,7 +95,18 @@ def main():
                         help="Scale the ellipse radii (1.0 = original, >1 = wider orbit, <1 = tighter)")
     args = parser.parse_args()
 
-    proj = proj_dir(args.project)
+    # ----- resolve project directory --------------------------------------
+    if args.path:
+        proj = Path(args.path).resolve()
+    elif args.project:
+        # standalone mode — need paths from tills/
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tills"))
+        from paths import project as proj_dir  # noqa: E402
+        proj = proj_dir(args.project)
+    else:
+        print("ERROR: either --project or --path is required")
+        sys.exit(1)
+
     input_path = Path(args.input) if args.input else proj / "cameras.json"
     output_path = Path(args.output) if args.output else proj / "cameras_align.json"
 
@@ -289,7 +303,7 @@ def main():
                          for row in sample_rots[i]],
             "fy": round(float(sample_fy[i]), 6),
             "fx": round(float(sample_fx[i]), 6),
-            "fov_x":80.0,
+            "fov_x": 80.0,
         })
 
     with open(output_path, "w") as f:

@@ -8,7 +8,7 @@ No COLMAP / UE dependency.
 
 Usage:
   python tills/run_pipeline_v4.py --project 09 --timeline tills/timeline/tl_09_01.json
-
+  python tills/run_pipeline_v4.py --project 08 --timeline tills/timeline/tl_09_01.json
 Timeline JSON schema:
 {
   "fps": 25,

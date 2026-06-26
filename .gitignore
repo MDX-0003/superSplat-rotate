@@ -1,6 +1,5 @@
 node_modules
 dist
-docs
 .codex
 .agents
 *.mp4

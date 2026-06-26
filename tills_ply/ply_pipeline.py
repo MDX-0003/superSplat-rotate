@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PLY processing pipeline: fuse → clip, with named preset management.
+PLY processing pipeline: interpolate → fuse → clip, with named preset management.
 
 Usage:
   # Preset management
@@ -13,19 +13,20 @@ Usage:
   python tills_ply/ply_pipeline.py --preset <name>
   python tills_ply/ply_pipeline.py --preset <name> --step fuse
   python tills_ply/ply_pipeline.py --preset <name> --step clip
-  python tills_ply/ply_pipeline.py --preset <name> --force
+  python tills_ply/ply_pipeline.py --preset <name> --step interpolate
 
   # Interactive: pick preset from a numbered list
   python tills_ply/ply_pipeline.py
   
-# 1. 调整参数 (跟以前一样，编辑两个 config)
+# 1. 调整参数 (跟以前一样，编辑三个 config)
    编辑 tills_ply/fuse_config.json
    编辑 tills_ply/clip_config.json
+   编辑 tills_ply/interpolate_config.json
 
 # 2. 保存为预设快照
    python tills_ply/ply_pipeline.py --save 06-激进版
 
-# 3. 一键执行 (fuse → clip)
+# 3. 一键执行 (interpolate → fuse → clip)
    python tills_ply/ply_pipeline.py --preset 06-激进版
 
 # 4. 下次切换项目，直接选预设名
@@ -91,7 +92,11 @@ def cmd_show(presets_data, name):
     p = presets[name]
     print(f"\nPreset: {name}")
     print(f"  Path        : {p.get('path', '-')}")
+    print(f"  max_index   : {p.get('max_index', '-')}")
     print(f"  Description : {p.get('description', '-')}")
+    print(f"  -- interpolate --")
+    for k, v in p.get("interpolate", {}).items():
+        print(f"    {k:24s}: {v}")
     print(f"  -- fuse --")
     for k, v in p.get("fuse", {}).items():
         print(f"    {k:24s}: {v}")
@@ -102,9 +107,11 @@ def cmd_show(presets_data, name):
 
 
 def cmd_save(presets_data, presets_file, name):
-    """Read current fuse_config.json + clip_config.json, save as a named preset."""
+    """Read current fuse_config.json + clip_config.json + interpolate_config.json,
+    save as a named preset.  Shared ``max_index`` is extracted to top level."""
     fuse_cfg = _read_config("fuse_config.json")
     clip_cfg = _read_config("clip_config.json")
+    interp_cfg = _read_config("interpolate_config.json")
 
     fuse_path = fuse_cfg.get("path", "")
     clip_path = clip_cfg.get("path", "")
@@ -117,9 +124,11 @@ def cmd_save(presets_data, presets_file, name):
         print("ERROR: no 'path' field found in fuse_config.json or clip_config.json")
         sys.exit(1)
 
+    # ---- shared max_index (prefer fuse, fall back to clip) ----
+    max_index = fuse_cfg.get("max_index") or clip_cfg.get("max_index")
+
     # build clean fuse section (only keys fuse_ply.py actually uses)
     fuse_section = {
-        "max_index": fuse_cfg.get("max_index"),
         "radius_scale": fuse_cfg.get("radius_scale", 1.0),
         "height_up": fuse_cfg.get("height_up"),
         "height_down": fuse_cfg.get("height_down"),
@@ -133,7 +142,6 @@ def cmd_save(presets_data, presets_file, name):
     clip_section = {
         "clip_percent": clip_cfg.get("clip_percent", 10.0),
         "denoise": clip_cfg.get("denoise", False),
-        "max_index": clip_cfg.get("max_index"),
         "radius_scale": clip_cfg.get("radius_scale", 1.0),
         "height_up": clip_cfg.get("height_up"),
         "height_down": clip_cfg.get("height_down"),
@@ -145,9 +153,17 @@ def cmd_save(presets_data, presets_file, name):
         "ring_height_down": clip_cfg.get("ring_height_down"),
     }
 
+    interp_section = {
+        "total": interp_cfg.get("total", 300),
+        "anchor_camera": interp_cfg.get("anchor_camera", "006"),
+        "radius_scale": interp_cfg.get("radius_scale", 1.0),
+    }
+
     presets_data["presets"][name] = {
         "path": preset_path,
+        "max_index": max_index,
         "description": "",
+        "interpolate": interp_section,
         "fuse": fuse_section,
         "clip": clip_section,
     }
@@ -203,10 +219,11 @@ def step(name, cmd, force_clean=None):
 def build_fuse_args(preset):
     """Convert a preset's 'fuse' section to CLI args for fuse_ply.py."""
     f = preset["fuse"]
+    max_index = preset.get("max_index") or f.get("max_index")  # top-level preferred
     args = [
         sys.executable, str(SCRIPT_DIR / "fuse_ply.py"),
         "--path", preset["path"],
-        "--max-index", str(f["max_index"]),
+        "--max-index", str(max_index),
         "--radius-scale", str(f.get("radius_scale", 1.0)),
         "--height-up", str(f["height_up"]),
         "--height-down", str(f["height_down"]),
@@ -225,22 +242,20 @@ def build_fuse_args(preset):
 def build_clip_args(preset):
     """Convert a preset's 'clip' section to CLI args for clip_ply.py."""
     c = preset["clip"]
+    max_index = preset.get("max_index") or c.get("max_index")  # top-level preferred
     args = [
         sys.executable, str(SCRIPT_DIR / "clip_ply.py"),
         "--path", preset["path"],
         "--clip-percent", str(c.get("clip_percent", 10.0)),
     ]
-    has_circle = c.get("denoise") or c.get("ring_delete")
-    if has_circle:
-        args.extend(["--max-index", str(c["max_index"])])
-        args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
     if c.get("denoise"):
         args.append("--denoise")
-        args.extend(["--height-up", str(c["height_up"])])
-        args.extend(["--height-down", str(c["height_down"])])
-        args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 30))])
+        args.extend(["--denoise-voxel-size", str(c.get("denoise_voxel_size", 0.30))])
+        args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 50))])
     if c.get("ring_delete"):
         args.append("--ring-delete")
+        args.extend(["--max-index", str(max_index)])
+        args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
         args.extend(["--ring-outer-delta", str(c.get("ring_outer_delta", 0.5))])
         args.extend(["--ring-inner-delta", str(c.get("ring_inner_delta", 0.3))])
         args.extend(["--ring-height-up", str(c["ring_height_up"])])
@@ -248,8 +263,25 @@ def build_clip_args(preset):
     return args
 
 
-def run_pipeline(preset, run_step=None, force=False):
-    """Execute fuse → clip (or a single step)."""
+def build_interpolate_args(preset):
+    """Convert a preset's 'interpolate' section to CLI args for
+    interpolate_cameras_circle.py (local to tills_ply/)."""
+    ip = preset.get("interpolate", {})
+    max_index = preset.get("max_index") or ip.get("max_index")
+    args = [
+        sys.executable, str(SCRIPT_DIR / "interpolate_cameras_circle.py"),
+        "--path", preset["path"],
+        "--max-index", str(max_index),
+        "--total", str(ip.get("total", 300)),
+        "--anchor-camera", str(ip.get("anchor_camera", "006")),
+        "--radius-scale", str(ip.get("radius_scale", 1.0)),
+    ]
+    return args
+
+
+def run_pipeline(preset, run_step=None):
+    """Execute interpolate → fuse → clip (or a single step).
+    Always force-cleans previous outputs (deletes before regenerate)."""
     proj = Path(preset["path"])
     if not proj.is_absolute():
         proj = Path.cwd() / proj
@@ -257,10 +289,16 @@ def run_pipeline(preset, run_step=None, force=False):
 
     clip_out = proj.parent / f"{proj.name}-clip"
 
+    # ---- interpolate ----
+    if run_step in (None, "interpolate"):
+        output_json = proj / "cameras_align.json"
+        clean = str(output_json) if output_json.exists() else None
+        step("interpolate", build_interpolate_args(preset), force_clean=clean)
+
+    # ---- fuse ----
     if run_step in (None, "fuse"):
-        # force: remove existing combine files before fusing
         clean = None
-        if force and proj.is_dir():
+        if proj.is_dir():
             combines = list(proj.glob("*combine*.ply"))
             if combines:
                 clean = str(combines[0])  # only cleans the first match
@@ -268,8 +306,9 @@ def run_pipeline(preset, run_step=None, force=False):
                     os.remove(c)
         step("fuse", build_fuse_args(preset), force_clean=clean)
 
+    # ---- clip ----
     if run_step in (None, "clip"):
-        clean = str(clip_out) if force and clip_out.exists() else None
+        clean = str(clip_out) if clip_out.exists() else None
         step("clip", build_clip_args(preset), force_clean=clean)
 
     print(f"\nDone.  Output: {clip_out}")
@@ -316,17 +355,18 @@ def interactive_select(presets_data):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PLY pipeline: fuse → clip with preset management"
+        description="PLY pipeline: interpolate → fuse → clip with preset management"
     )
     # preset management
     parser.add_argument("--list", action="store_true", help="List all presets")
     parser.add_argument("--show", type=str, metavar="NAME", help="Show preset details")
-    parser.add_argument("--save", type=str, metavar="NAME", help="Save current fuse/clip configs as a named preset")
+    parser.add_argument("--save", type=str, metavar="NAME", help="Save current fuse/clip/interpolate configs as a named preset")
     parser.add_argument("--del", type=str, metavar="NAME", dest="delete_name", help="Delete a preset")
     # pipeline execution
     parser.add_argument("--preset", type=str, metavar="NAME", help="Preset name to run")
-    parser.add_argument("--step", type=str, choices=["fuse", "clip"], help="Run only one step (default: both)")
-    parser.add_argument("--force", action="store_true", help="Remove previous outputs before running")
+    parser.add_argument("--step", type=str, choices=["interpolate", "fuse", "clip"],
+                        help="Run only one step (default: all three)")
+    parser.add_argument("--force", action="store_true", help="(deprecated — force is always on)")
     # config
     parser.add_argument("--presets-file", type=str, default=None,
                         help=f"Path to presets JSON (default: {DEFAULT_PRESETS_FILE})")
@@ -357,14 +397,14 @@ def main():
             print(f"ERROR: preset '{args.preset}' not found.  Use --list to see available presets.")
             sys.exit(1)
         preset = presets[args.preset]
-        run_pipeline(preset, run_step=args.step, force=args.force)
+        run_pipeline(preset, run_step=args.step)
         return
 
     # ---- interactive mode ----
     name = interactive_select(presets_data)
     if name:
         preset = presets_data["presets"][name]
-        run_pipeline(preset, force=args.force)
+        run_pipeline(preset)
 
 
 if __name__ == "__main__":
