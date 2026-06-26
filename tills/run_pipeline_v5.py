@@ -112,7 +112,9 @@ def validate_config(cfg):
     if "project" not in cfg:
         errors.append("Missing 'project'")
     if "output" not in cfg or "segments" not in cfg.get("output", {}):
-        errors.append("Missing 'output.segments'")
+        print("ERROR: Missing 'output.segments' — v5 requires this for concat.")
+        print("If this is a v6 project, use: python tills/run_pipeline_v6.py --config ...")
+        sys.exit(1)
 
     # new format requires 'preset'; old format requires max_index+fuse+clip
     has_new = "preset" in cfg

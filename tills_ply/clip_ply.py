@@ -160,20 +160,23 @@ def _denoise_components(verts, voxel_size=0.15, min_points=50):
         queue = [seed]
         visited.add(seed)
 
+        # Pre-compute neighbour offsets (avoids deep nested loops)
+        _neighbour_offsets = [
+            (dx, dy, dz)
+            for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+            if not (dx == 0 and dy == 0 and dz == 0)
+        ]
+
         while queue:
             v = queue.pop()
             comp_pts.extend(voxel_to_pts[v])
 
             vx, vy, vz = v
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for dz in (-1, 0, 1):
-                        if dx == 0 and dy == 0 and dz == 0:
-                            continue
-                        nb = (vx + dx, vy + dy, vz + dz)
-                        if nb in voxel_to_pts and nb not in visited:
-                            visited.add(nb)
-                            queue.append(nb)
+            for dx, dy, dz in _neighbour_offsets:
+                nb = (vx + dx, vy + dy, vz + dz)
+                if nb in voxel_to_pts and nb not in visited:
+                    visited.add(nb)
+                    queue.append(nb)
 
         components.append(comp_pts)
 

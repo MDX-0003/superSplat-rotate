@@ -79,6 +79,7 @@ Config file (JSON) — all keys optional; CLI args take precedence:
 """
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -600,6 +601,19 @@ def main():
     if other:
         other_labels = ", ".join(lab for _, lab in other)
         print(f"Other PLYs: {other_labels}  -- cylinder-filtered")
+    else:
+        # single PLY — nothing to fuse, just copy
+        clean_prefix = common_prefix.rstrip("0123456789")
+        base = f"{clean_prefix}combine" if clean_prefix else "combine"
+        subfix = args.output_subfix if args.output_subfix else "-".join(str(i) for i in selected)
+        out_name = f"{base}-{subfix}.ply"
+        out_path = proj_dir / out_name
+        print(f"\n  [fuse] 仅 1 个 PLY — 跳过合并，直接复制")
+        shutil.copy2(str(main_path), str(out_path))
+        _, _, verts = read_ply(str(main_path))
+        print(f"Output          : {out_path}")
+        print(f"Total points    : {verts.shape[0]}")
+        return
 
     # ----- read & filter ---------------------------------------------------
     # xyz are columns 0,1,2 in the PLY vertex record
