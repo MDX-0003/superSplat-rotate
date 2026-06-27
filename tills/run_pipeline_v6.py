@@ -99,8 +99,9 @@ def run_v6_train(cfg, preset, force):
         # T3: batch_run
         any_missing = False
         for _, frame_id in group:
+            ply_dst = proj_dir / f"{sub_dir}-{frame_id}.ply"
             ply_src = litegs_path / "results" / sub_dir / f"{sub_dir}-{frame_id}.ply"
-            if force or not ply_src.exists():
+            if force or not (ply_src.exists() or ply_dst.exists()):
                 any_missing = True
                 break
 
@@ -109,7 +110,7 @@ def run_v6_train(cfg, preset, force):
                  f"uv run python batch_run.py --sub_dir {sub_dir}",
                  shell=True, cwd=str(litegs_path))
         else:
-            print(f"\n  T3: SKIP — all result PLYs already exist")
+            print(f"\n  T3: SKIP — all result PLYs already exist (LiteGS or project)")
 
         # T4: copy cameras.json from LiteGS results → project root
         cameras_src = litegs_path / "results" / sub_dir / "cameras.json"
@@ -143,6 +144,8 @@ def run_v6_train(cfg, preset, force):
 def run_v6_fuse_interactive(cfg, preset, force):
     """List project PLYs, wait for user to pick indices, then fuse+clip."""
     proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
+
+    input(f"\n  输入 Enter 开始扫描可合并 PLY ...")
 
     # list all .ply files in project root
     ply_files = sorted(proj_dir.glob("*.ply"))

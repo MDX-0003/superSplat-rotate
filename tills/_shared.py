@@ -64,6 +64,21 @@ def step(name, cmd, shell=False, force_clean=None, cwd=None):
         sys.exit(1)
 
 
+def unique_path(filepath):
+    """Return *filepath* if it doesn't exist, else 'stem-1.ext', 'stem-2.ext', ..."""
+    if not filepath.exists():
+        return filepath
+    stem = filepath.stem
+    suffix = filepath.suffix
+    parent = filepath.parent
+    counter = 1
+    while True:
+        candidate = parent / f"{stem}-{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
 def check_dev_server(url="http://127.0.0.1:3000/"):
     """Return True if the SuperSplat dev server is reachable."""
     try:
@@ -492,8 +507,10 @@ async def render_video(page, total_frames, renders_dir, expected_filename, fps):
 
     print(f"  渲染完成，从 OPFS 读取文件...")
 
-    target_path = renders_dir / expected_filename
     renders_dir.mkdir(parents=True, exist_ok=True)
+    target_path = unique_path(renders_dir / expected_filename)
+    if target_path.name != expected_filename:
+        print(f"  (输出重命名: {expected_filename} → {target_path.name})")
 
     try:
         file_size = await page.evaluate("""async () => {

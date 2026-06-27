@@ -27,8 +27,12 @@
             "clip": {
                 "clip_percent": 0.0,
                 "denoise": true,
+                "denoise_method": "region-grow",
+                "denoise_grid_cell": 0.15,
+                "denoise_min_points": 30,
                 "denoise_voxel_size": 0.3,
-                "denoise_min_points": 50,
+                "height_up": 2.0,
+                "height_down": 0.5,
                 "radius_scale": 1.0,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,
@@ -62,8 +66,12 @@
             "clip": {
                 "clip_percent": 0.0,
                 "denoise": true,
+                "denoise_method": "region-grow",
+                "denoise_grid_cell": 0.15,
+                "denoise_min_points": 30,
                 "denoise_voxel_size": 0.3,
-                "denoise_min_points": 50,
+                "height_up": 2.0,
+                "height_down": 0.5,
                 "radius_scale": 1.0,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,
@@ -96,8 +104,12 @@
             "clip": {
                 "clip_percent": 0.1,
                 "denoise": true,
-                "denoise_voxel_size": 0.1,
+                "denoise_method": "region-grow",
+                "denoise_grid_cell": 0.15,
                 "denoise_min_points": 20,
+                "denoise_voxel_size": 0.1,
+                "height_up": 3.0,
+                "height_down": 0.5,
                 "radius_scale": 1.0,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,
@@ -106,7 +118,7 @@
                 "ring_height_down": 0.3
             }
         },
-        "02-0618测试-2人": {
+        "02-0627测试-2人": {
             "path": "CameraData/02",
             "max_index": 89,
             "description": "",
@@ -130,8 +142,12 @@
             "clip": {
                 "clip_percent": 0.1,
                 "denoise": true,
-                "denoise_voxel_size": 0.1,
-                "denoise_min_points": 20,
+                "denoise_method": "region-grow",
+                "denoise_grid_cell": 0.15,
+                "denoise_min_points": 30,
+                "denoise_voxel_size": 0.2,
+                "height_up": 3.0,
+                "height_down": 0.5,
                 "radius_scale": 1.0,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,

@@ -25,6 +25,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from _shared import unique_path
 
 
 # ── constants ──────────────────────────────────────────────────────────────────
@@ -141,12 +142,13 @@ def load_preset(name):
     return data["presets"][name]
 
 
-def build_clip_args(preset):
+def build_clip_args(preset, path_override=None):
     """Build CLI args for tills_ply/clip_ply.py from a preset dict."""
     c = preset["clip"]
+    proj_path = path_override if path_override else preset["path"]
     args = [
         sys.executable, str(TILLS_PLY_DIR / "clip_ply.py"),
-        "--path", preset["path"],
+        "--path", proj_path,
         "--clip-percent", str(c.get("clip_percent", 10.0)),
     ]
     has_circle = c.get("denoise") or c.get("ring_delete")
@@ -245,7 +247,9 @@ def run_litegs_train(cfg, preset, segments, force):
     clip_out = proj_dir.parent / f"{proj_dir.name}-clip"
     if force and clip_out.is_dir():
         shutil.rmtree(clip_out)
-    step(f"T5  clip (preset: {cfg['preset']})", build_clip_args(preset))
+    step(f"T5  clip (preset: {cfg['preset']})",
+         build_clip_args(preset,
+                         path_override=f"CameraData/{cfg['project']}"))
 
 
 # ── PLY selection ──────────────────────────────────────────────────────────────
@@ -674,8 +678,10 @@ async def render_video(page, total_frames, renders_dir, expected_filename, fps):
     print(f"  渲染完成，从 OPFS 读取文件...")
 
     # ── read file back from OPFS in chunks ───────────────────────────────
-    target_path = renders_dir / expected_filename
     renders_dir.mkdir(parents=True, exist_ok=True)
+    target_path = unique_path(renders_dir / expected_filename)
+    if target_path.name != expected_filename:
+        print(f"  (输出重命名: {expected_filename} → {target_path.name})")
 
     try:
         # get total file size first
@@ -969,7 +975,7 @@ def concat_to_output(segments, real_mp4_map, render_names, proj_dir,
             # concat demuxer needs forward-slash paths or quoted backslashes
             f.write(f"file '{ts_path.as_posix()}'\n")
 
-    output_mp4 = output_dir / "output.mp4"
+    output_mp4 = unique_path(output_dir / "output.mp4")
     step("TS concat → output.mp4",
          (f'ffmpeg -y -f concat -safe 0 -i "{concat_list}" '
           f'-c copy -fflags +genpts "{output_mp4}"'),
@@ -1158,7 +1164,9 @@ def main():
     if should_run("clip"):
         clip_out = proj_dir.parent / f"{proj_name}-clip"
         clean = str(clip_out) if (args.force and clip_out.exists()) else None
-        step("clip → XX-clip/*.ply", build_clip_args(preset), force_clean=clean)
+        step("clip → XX-clip/*.ply",
+             build_clip_args(preset, path_override=f"CameraData/{proj_name}"),
+             force_clean=clean)
 
     # ── Step: render (Playwright automation) ───────────────────────────────
     if should_run("render"):
