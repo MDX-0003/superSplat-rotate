@@ -212,17 +212,27 @@ def run_v6_fuse_interactive(cfg, preset, force):
         fuse_args.extend(["--bias-radius-percentile", str(f.get("bias_radius_percentile", 50))])
 
     # fuse
-    combine_plys = list(proj_dir.glob("*combine*.ply"))
-    clean = str(combine_plys[0]) if (force and combine_plys) else None
-    if clean:
-        for c in combine_plys[1:]:
-            c.unlink()
-    step("fuse → combine PLYs", fuse_args, force_clean=clean)
+    combine_plys_before = set(p.name for p in proj_dir.glob("*combine*.ply"))
+    step("fuse → combine PLYs", fuse_args)
 
-    # clip — override preset path to target the current project
+    # find the newly created combine PLY
+    combine_plys_after = list(proj_dir.glob("*combine*.ply"))
+    new_combine = None
+    for cp in combine_plys_after:
+        if cp.name not in combine_plys_before:
+            new_combine = cp
+            break
+    if not new_combine and combine_plys_after:
+        # fallback: use newest
+        new_combine = max(combine_plys_after, key=lambda p: p.stat().st_mtime)
+        print(f"  未检测到新合成 PLY，使用最新: {new_combine.name}")
+
+    # clip — only process the new combine PLY
     clip_out = proj_dir.parent / f"{proj_dir.name}-clip"
     clean = str(clip_out) if (force and clip_out.is_dir()) else None
-    clip_args = build_clip_args(preset, path_override=f"CameraData/{cfg['project']}")
+    clip_args = build_clip_args(preset,
+                                path_override=f"CameraData/{cfg['project']}",
+                                files=new_combine.name if new_combine else None)
     step("clip → XX-clip/*.ply", clip_args, force_clean=clean)
 
     print(f"\n  fuse+clip 完成。")

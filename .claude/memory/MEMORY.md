@@ -1,3 +1,4 @@
 - [项目结构](project-structure.md) — SuperSplat 两套管线体系、目录布局、代码重复关系
-- [Pipeline v4](pipeline-v4.md) — run_pipeline_v4.py: 扁平图像 → 实拍+渲染混合 MP4
+- [Pipeline v5/v6](pipeline-v5-v6.md) — v5: LiteGS 训练 + Playwright 自动化 + 实拍混剪 | v6: 多帧训练 + 交互 fuse + 纯渲染
+- [Pipeline v4](pipeline-v4.md) — run_pipeline_v4.py: 扁平图像 → 实拍+渲染混合 MP4（保留独立运行）
 - [PLY Pipeline](ply-pipeline.md) — tills_ply/ply_pipeline.py: interpolate → fuse → clip 三步 PLY 处理

@@ -101,11 +101,13 @@ def load_preset(name):
     return data["presets"][name]
 
 
-def build_clip_args(preset, path_override=None):
+def build_clip_args(preset, path_override=None, files=None):
     """Build CLI args for tills_ply/clip_ply.py from a preset dict.
 
     If *path_override* is given, it replaces ``preset['path']`` (used by v6 to
     redirect output to a different project without modifying presets.json).
+    If *files* is given (comma-separated string), ``--files`` is appended so
+    clip_ply only processes those filenames.
     """
     c = preset["clip"]
     proj_path = path_override if path_override else preset["path"]
@@ -136,6 +138,8 @@ def build_clip_args(preset, path_override=None):
             args.extend(["--ring-height-up", str(c["ring_height_up"])])
         if "ring_height_down" in c:
             args.extend(["--ring-height-down", str(c["ring_height_down"])])
+    if files:
+        args.extend(["--files", files])
     return args
 
 

@@ -66,6 +66,7 @@ Config file (JSON) — all keys optional; CLI args take precedence:
   denoise_method      去噪方法: "region-grow" (默认) 或 "components"。
                       region-grow 需要 cameras.json 存在。
   denoise_min_points  region-grow: 每个 grid cell 的最低点数阈值 (默认 30)。
+                        数值越大剔除越激进
                       components: 连通分量保留的最低点数 (默认 50)。
   denoise_grid_cell   [region-grow] 2D 网格边长 (米, 默认 0.15)。
   denoise_voxel_size  [components] 3D 体素边长 (米, 默认 0.30)。
@@ -390,6 +391,8 @@ def main():
     parser.add_argument("--ring-height-down", type=float,
                         default=cfg.get("ring_height_down"),
                         help="[ring-delete] Height below fitted plane for ring deletion (m)")
+    parser.add_argument("--files", type=str, default=None,
+                        help="Comma-separated filenames to process (default: all .ply files in input)")
     args = parser.parse_args(remaining)
 
     if not (0.0 <= args.clip_percent <= 100.0):
@@ -487,6 +490,14 @@ def main():
     else:
         ply_files = sorted(proj_dir.glob("*.ply"))
 
+    # filter by --files if specified
+    if args.files:
+        wanted = set(f.strip() for f in args.files.split(","))
+        ply_files = [p for p in ply_files if p.name in wanted]
+        if not ply_files:
+            print(f"ERROR: --files specified but no matching PLY found in {proj_dir}")
+            sys.exit(1)
+
     if not ply_files:
         print(f"ERROR: no .ply files found in {proj_dir} or {plys_dir}")
         sys.exit(1)
@@ -499,7 +510,14 @@ def main():
     print(f"Clip percent    : {clip_pct:.1f}%  (keep bottom {keep_frac*100:.1f}%)")
     print(f"PLY files       : {len(ply_files)}")
 
+    n_skipped = 0
     for ply_path in ply_files:
+        out_path = out_dir / ply_path.name
+        if out_path.exists():
+            print(f"\n  SKIP: {ply_path.name} — already in {out_dir.name}/")
+            n_skipped += 1
+            continue
+
         print(f"\nProcessing: {ply_path.name} ...")
 
         header_lines, properties, verts = read_ply(str(ply_path))
@@ -574,7 +592,11 @@ def main():
             parts.append(f"ring {n_ring}")
         print(f"  {'  |  '.join(parts)}")
 
-    print(f"\nDone. {len(ply_files)} files -> {out_dir}")
+    processed = len(ply_files) - n_skipped
+    if n_skipped > 0:
+        print(f"\nDone. {processed} processed, {n_skipped} skipped -> {out_dir}")
+    else:
+        print(f"\nDone. {processed} files -> {out_dir}")
 
 
 if __name__ == "__main__":
