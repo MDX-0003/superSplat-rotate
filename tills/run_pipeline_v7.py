@@ -242,9 +242,13 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
             else:
                 status_rel = f"results/{sub_dir}/_worker_status.json"
 
+            # Use LiteGSWin's own venv python directly — NOT uv run.
+            # uv run inherits VIRTUAL_ENV from the parent (supersplat's venv)
+            # when the host uses shell=True, which breaks LiteGS imports.
+            py = f'"{worker.litegs_path}\\.venv\\Scripts\\python.exe"'
             cmd = (
                 f'cd /d "{worker.litegs_path}" && '
-                f'uv run python batch_run.py '
+                f'{py} batch_run.py '
                 f'--sub_dir {sub_dir} '
                 f'--frames {" ".join(frame_names)} '
                 f'--worker-status {status_rel}'
