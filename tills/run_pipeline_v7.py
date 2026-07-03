@@ -25,7 +25,9 @@ import json
 import shutil
 import sys
 import threading
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # shared helpers (Playwright, presets, clip, path resolution)
@@ -43,6 +45,118 @@ from _distributed import (
 
 # fuse + render — complete reuse from v6
 from run_pipeline_v6 import run_v6_fuse_interactive, async_main_v6
+
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _copy_frames_to_worker(worker: WorkerNode,
+                           chunk: list[tuple[Path, str]],
+                           sub_dir: str, force: bool) -> tuple[str, list[tuple[str, bool]]]:
+    """Copy a worker's assigned frames to its LiteGSWin data directory.
+
+    Runs in a thread — one per worker — so host and remote copies happen
+    concurrently instead of serially.  For remote workers, all frames are
+    sent in a single SCP call (instead of one SCP per frame).
+
+    Returns:
+        (worker_id, [(frame_name, success), ...])
+    """
+    results: list[tuple[str, bool]] = []
+    worker_data = Path(worker.litegs_path) / "data" / sub_dir
+    frame_names = [fd.name for fd, _ in chunk]
+
+    if worker.is_host:
+        # Host: each frame is a local copytree; still serial within thread
+        # but multiple workers' threads run concurrently.
+        for fd, frame_id in chunk:
+            dst = worker_data / fd.name
+            try:
+                if force and dst.exists():
+                    shutil.rmtree(dst)
+                if force or not dst.exists():
+                    shutil.copytree(fd, dst, dirs_exist_ok=True)
+                results.append((fd.name, True))
+            except Exception as e:
+                print(f"    [host] {fd.name} → ERROR: {e}")
+                results.append((fd.name, False))
+    else:
+        # Remote: one batch SCP for ALL frames — single SSH handshake
+        try:
+            # Step 1: clean + ensure parent dir
+            if force:
+                for name in frame_names:
+                    d = worker_data / name
+                    ssh_run(worker,
+                            f'if exist "{d}" rmdir /s /q "{d}"')
+            ssh_run(worker,
+                    f'if not exist "{worker_data}" mkdir "{worker_data}"')
+
+            # Step 2: single SCP with all frame dirs as sources
+            src_paths = [str(fd) for fd, _ in chunk]
+            dst_base = str(worker_data).replace("\\", "/")
+            ok = _scp_send_multi(worker, src_paths, dst_base)
+            for name in frame_names:
+                results.append((name, ok))
+        except Exception as e:
+            print(f"    [{worker.id}] batch SCP → ERROR: {e}")
+            for name in frame_names:
+                results.append((name, False))
+
+    return worker.id, results
+
+
+def _scp_send_multi(worker: WorkerNode, local_paths: list[str],
+                    remote_dst: str) -> bool:
+    """Send multiple files/dirs to a worker in a single SCP call.
+
+    One SSH handshake instead of N, avoiding per-file connection overhead.
+    ``remote_dst`` must already exist on the worker.
+    """
+    import subprocess as _sp
+    remote_target = f"{worker.ssh_target}:{remote_dst}"
+    scp_args = ["scp", "-r"]
+    if worker.ssh_key_path:
+        scp_args.extend(["-i", worker.ssh_key_path])
+    if worker.ssh_port != 22:
+        scp_args.extend(["-P", str(worker.ssh_port)])
+    scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
+    scp_args.extend(["-o", "ConnectTimeout=10"])
+    scp_args.extend(local_paths)
+    scp_args.append(remote_target)
+
+    try:
+        result = _sp.run(scp_args, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=600)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _scp_recv_multi(worker: WorkerNode, remote_paths: list[str],
+                    local_dst: Path) -> bool:
+    """Pull multiple files from a worker in a single SCP call.
+
+    The reverse of ``_scp_send_multi`` — one handshake for N files.
+    """
+    import subprocess as _sp
+    remote_src = f"{worker.ssh_target}:"
+    scp_args = ["scp", "-r"]
+    if worker.ssh_key_path:
+        scp_args.extend(["-i", worker.ssh_key_path])
+    if worker.ssh_port != 22:
+        scp_args.extend(["-P", str(worker.ssh_port)])
+    scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
+    scp_args.extend(["-o", "ConnectTimeout=10"])
+    # remote paths need the user@host: prefix
+    scp_args.extend([f"{remote_src}{rp}" for rp in remote_paths])
+    scp_args.append(str(local_dst))
+
+    try:
+        result = _sp.run(scp_args, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=600)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 # ── v7 distributed train ───────────────────────────────────────────────────────
@@ -70,12 +184,26 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
     collide.
     """
     proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
+    timing: dict[str, float] = {}  # phase_name → seconds
+    _t0 = time.time()
+
+    def _phase_begin(name: str) -> float:
+        t = time.time()
+        timing.setdefault(name, 0.0)
+        return t
+
+    def _phase_end(name: str, start: float) -> None:
+        elapsed = time.time() - start
+        timing[name] += elapsed
+        print(f"  [{name}] {elapsed:.1f}s")
+
     raw_dir = proj_dir / "raw_images"
     if not raw_dir.is_dir():
         print(f"ERROR: raw_images directory not found: {raw_dir}")
         sys.exit(1)
 
     # ── Phase 1: scan & parse ──
+    _p1 = _phase_begin("scan")
     frame_dirs = sorted(d for d in raw_dir.iterdir() if d.is_dir())
     if not frame_dirs:
         print(f"ERROR: no frame subdirectories found in {raw_dir}")
@@ -134,6 +262,7 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
     for fd, sub_dir, frame_id in frames:
         by_subdir[sub_dir].append((fd, frame_id))
 
+    _phase_end("scan", _p1)
     training_cfg = cfg.get("distributed", {}).get("training", {})
 
     # ── Process one sub_dir at a time ──
@@ -142,6 +271,7 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
         print(f"  sub_dir={sub_dir}  ({len(group)} total frame(s))")
 
         # ── Phase 2: differential detection ──
+        _p2 = _phase_begin("diff")
         new_frames: list[tuple[Path, str]] = []
         skipped = 0
         for fd, frame_id in group:
@@ -152,6 +282,7 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
                 skipped += 1
 
         print(f"  新帧: {len(new_frames)}, 已有 PLY 跳过: {skipped}")
+        _phase_end("diff", _p2)
 
         if not new_frames:
             print(f"  sub_dir={sub_dir}: 所有帧均已训练，跳过")
@@ -183,40 +314,36 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
 
         # copy frame data to each worker (skipped in simulate-local mode:
         # all workers share the same data/ directory on the host)
+        _p3 = _phase_begin("distribute")
         if simulate_local:
             print(f"\n  [Phase 2] simulate-local: 跳过帧分发 "
                   f"(所有 Worker 共享 data/{sub_dir}/)")
         else:
-            print(f"\n  [Phase 2] 分发帧数据 → 各 Worker ...")
-            for worker, chunk in zip(online, chunks):
-                if not chunk:
-                    continue
-                worker_data = Path(worker.litegs_path) / "data" / sub_dir
+            print(f"\n  [Phase 2] 分发帧数据 → 各 Worker (并行) ...")
+            # ThreadPoolExecutor: host copy + all remote SCPs run concurrently
+            with ThreadPoolExecutor(max_workers=len(online)) as executor:
+                futures = {}
+                for worker, chunk in zip(online, chunks):
+                    if not chunk:
+                        continue
+                    fut = executor.submit(
+                        _copy_frames_to_worker, worker, chunk, sub_dir, force,
+                    )
+                    futures[fut] = worker.id
 
-                for fd, frame_id in chunk:
-                    dst = worker_data / fd.name
-
-                    if worker.is_host:
-                        if force and dst.exists():
-                            shutil.rmtree(dst)
-                            print(f"    [host] force-clean {fd.name}")
-                        if force or not dst.exists():
-                            shutil.copytree(fd, dst, dirs_exist_ok=True)
-                            print(f"    [host] {fd.name} → {dst}")
-                        else:
-                            print(f"    [host] SKIP {fd.name} (exists)")
-                    else:
-                        if force:
-                            ssh_run(worker,
-                                    f'if exist "{dst}" rmdir /s /q "{dst}"')
-                        ssh_run(worker,
-                                f'if not exist "{worker_data}" mkdir "{worker_data}"')
-                        ok = scp_send(worker, fd,
-                                      str(dst).replace("\\", "/"))
-                        tag = "OK" if ok else "FAILED"
-                        print(f"    [{worker.id}] {fd.name} → {tag}")
+                for fut in as_completed(futures):
+                    wid = futures[fut]
+                    try:
+                        _wid, results = fut.result()
+                        for fname, ok in results:
+                            tag = "OK" if ok else "FAILED"
+                            print(f"    [{_wid}] {fname} → {tag}")
+                    except Exception as e:
+                        print(f"    [{wid}] → ERROR: {e}")
+        _phase_end("distribute", _p3)
 
         # ── Phase 4: parallel training ──
+        _p4 = _phase_begin("train")
         print(f"\n  [Phase 3] 启动并行训练 ...")
         processes: list[tuple[WorkerNode, list, object]] = []
 
@@ -309,38 +436,50 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
                 except Exception:
                     pass
 
+        _phase_end("train", _p4)
+
         # ── Phase 6: collect results ──
+        _p5 = _phase_begin("collect")
         print(f"\n  [Phase 4] 回收训练结果 → CameraData ...")
         for worker, chunk, proc in processes:
             if not chunk:
                 continue
             worker_results = Path(worker.litegs_path) / "results" / sub_dir
 
+            # filter out PLYs that already exist on host (unless --force)
+            to_collect: list[tuple[str, Path, Path]] = []  # (label, remote, local)
             for fd, frame_id in chunk:
                 ply_name = f"{sub_dir}-{frame_id}.ply"
                 remote_ply = worker_results / ply_name
                 local_ply = proj_dir / ply_name
-
                 if local_ply.exists() and not force:
                     print(f"    SKIP {ply_name} (exists)")
                     continue
+                to_collect.append((ply_name, remote_ply, local_ply))
 
-                if worker.is_host:
+            if not to_collect:
+                continue
+
+            if worker.is_host:
+                # Host: local copy (already fast)
+                for label, remote_ply, local_ply in to_collect:
                     if remote_ply.exists():
                         shutil.copy2(str(remote_ply), str(local_ply))
                         size_mb = local_ply.stat().st_size / 1024 ** 2
-                        print(f"    [host] {ply_name} → OK ({size_mb:.1f} MB)")
+                        print(f"    [host] {label} → OK ({size_mb:.1f} MB)")
                     else:
-                        print(f"    [host] {ply_name} → NOT FOUND (训练可能失败)")
-                else:
-                    ok = scp_recv(worker,
-                                  str(remote_ply).replace("\\", "/"),
-                                  local_ply)
-                    if ok:
+                        print(f"    [host] {label} → NOT FOUND (训练可能失败)")
+            else:
+                # Remote: batch all PLYs in one SCP call
+                src_paths = [str(rp).replace("\\", "/") for _, rp, _ in to_collect]
+                dst_base = f"{worker.ssh_target}:{str(proj_dir).replace(chr(92), '/')}/"
+                ok = _scp_recv_multi(worker, src_paths, proj_dir)
+                for label, _, local_ply in to_collect:
+                    if ok and local_ply.exists():
                         size_mb = local_ply.stat().st_size / 1024 ** 2
-                        print(f"    [{worker.id}] {ply_name} → OK ({size_mb:.1f} MB)")
+                        print(f"    [{worker.id}] {label} → OK ({size_mb:.1f} MB)")
                     else:
-                        print(f"    [{worker.id}] {ply_name} → FAILED")
+                        print(f"    [{worker.id}] {label} → FAILED")
 
         # collect cameras.json from best available worker
         for worker in online:
@@ -366,6 +505,28 @@ def run_v7_train(cfg: dict, workers: list[WorkerNode], force: bool,
             print(f"\n  训练被中断（已完成帧的 PLY 已回收）。")
             print(f"  重新运行将自动跳过已完成帧。")
             sys.exit(1)
+
+        _phase_end("collect", _p5)
+
+    # ── timing summary ──
+    timing["total"] = time.time() - _t0
+    print(f"\n{'─'*60}")
+    print(f"  各阶段耗时:")
+    for name in ["scan", "diff", "distribute", "train", "collect"]:
+        if name in timing:
+            print(f"    {name:<14} {timing[name]:.1f}s")
+    print(f"    {'total':<14} {timing['total']:.1f}s")
+    print(f"{'─'*60}")
+
+    # write timing JSON alongside pipeline.json
+    timing_path = proj_dir / "v7_timing.json"
+    timing_out = {
+        "project": cfg["project"],
+        "phases": {k: round(v, 3) for k, v in timing.items()},
+    }
+    with open(timing_path, "w", encoding="utf-8") as f:
+        json.dump(timing_out, f, ensure_ascii=False, indent=2)
+    print(f"  耗时记录 → {timing_path}")
 
     print(f"\n  v7 训练阶段完成。")
     print(f"  下一步: python tills/run_pipeline_v7.py "
