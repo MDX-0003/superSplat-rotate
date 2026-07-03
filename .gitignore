@@ -11,6 +11,7 @@ dist
 *.png
 *.jpg
 CameraData/*
+!CameraData/_template/
 SequenceData/*
 __pycache__/
 *.pyc

@@ -1,0 +1,72 @@
+{
+  "_doc": "v7 分布式训练 — Worker 节点配置模板",
+  "_usage": [
+    "1. 复制本文件到 CameraData/<project>/workers.json",
+    "2. 修改每台机器的 hostname / ip 为实际值（hostname 必须与本机 'hostname' 命令输出一致）",
+    "3. 确认 litegs_path / supersplat_path 与实际路径一致",
+    "4. v7 启动时自动检测 '本机是哪一个 Worker'——不需要手动指定 is_host",
+    "5. 如果机器数不足 5 台，删除多余的条目即可"
+  ],
+  "_fields": {
+    "id": "Worker 标识名（任意，用于日志和面板显示）",
+    "hostname": "Windows 计算机名（cmd 执行 hostname 即可获取）。v7 据此自动识别本机",
+    "ip": "局域网 IPv4 地址（ipconfig 查看）",
+    "ssh_user": "SSH 登录用户名（通常是 Administrator）",
+    "ssh_port": "SSH 监听端口。22 是 SSH 协议的标准默认端口，除非副机 sshd 配置了其他端口否则填 22",
+    "ssh_key_path": "SSH 私钥路径（null 表示使用默认 ~/.ssh/id_ed25519）",
+    "litegs_path": "本机 LiteGSWin 仓库的绝对路径",
+    "supersplat_path": "本机 supersplat 仓库的绝对路径（副机可省略，仅训练不需要）"
+  },
+  "workers": [
+    {
+      "id": "host",
+      "hostname": "HOST-PC",
+      "ip": "127.0.0.1",
+      "ssh_user": "Administrator",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+    },
+    {
+      "id": "worker1",
+      "hostname": "WORKER1-PC",
+      "ip": "172.28.52.135",
+      "ssh_user": "Administrator",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+    },
+    {
+      "id": "worker2",
+      "hostname": "WORKER2-PC",
+      "ip": "172.28.52.135",
+      "ssh_user": "Administrator",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+    },
+    {
+      "id": "worker3",
+      "hostname": "WORKER3-PC",
+      "ip": "172.28.52.135",
+      "ssh_user": "Administrator",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+    },
+    {
+      "id": "worker4",
+      "hostname": "WORKER4-PC",
+      "ip": "172.28.52.135",
+      "ssh_user": "Administrator",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+    }
+  ]
+}

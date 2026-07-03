@@ -1,0 +1,25 @@
+{
+  "_doc": "v7 分布式训练 — pipeline.json 模板",
+  "_usage": [
+    "1. 复制本文件到 CameraData/<project>/pipeline.json",
+    "2. 修改 project 为项目名（如 06）",
+    "3. 修改 preset 为 presets.json 中已定义的预设名",
+    "4. 修改 litegs_path 为本机 LiteGSWin 路径",
+    "5. 修改 distributed.training.* 为训练参数"
+  ],
+  "project": "XX",
+  "preset": "通用合并方案",
+  "jsons_path": "E:/path/to/camera/jsons",
+  "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+  "fps": 25,
+  "resolution": "3840x2160",
+  "distributed": {
+    "enabled": true,
+    "workers_config": "workers.json",
+    "training": {
+      "iterations": 25000,
+      "target_primitives": 300000,
+      "frame_stride": 1
+    }
+  }
+}
