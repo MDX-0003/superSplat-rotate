@@ -52,6 +52,62 @@ To initialize a local development environment for SuperSplat, ensure you have [N
 
 When changes to the source are detected, SuperSplat is rebuilt automatically. Simply refresh your browser to see your changes.
 
+## Python 管线（v7 分布式训练）
+
+本项目包含 Python 自动化管线（`tills/`），支持单机和多机分布式 3DGS 训练。Python 依赖通过 [uv](https://docs.astral.sh/uv/) 管理。
+
+### 环境配置
+
+```powershell
+# 1. 安装 uv（如未安装）
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 2. 创建虚拟环境并安装 Python 依赖
+cd E:\work\26.7_SKNJ\supersplat
+uv sync
+
+# 3. 安装 Playwright 浏览器（渲染步骤需要）
+uv run playwright install chromium
+```
+
+依赖声明在 [pyproject.toml](pyproject.toml)，无需手动 `pip install`。
+
+### 运行 v7 分布式训练
+
+```powershell
+# 全流程（差分检测 → 分发 → 训练 → fuse → render）
+uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json
+
+# 仅训练，指定帧号（支持 frame_id 或完整目录名）
+uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json --steps train --frames 122221 151131
+
+# 本地模拟（无需副机，在本机启动 5 个进程模拟分布式）
+uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json --steps train --simulate-local
+```
+
+### 新建项目
+
+```powershell
+# 从模板创建配置
+cp CameraData\_template\pipeline.json CameraData\<新项目>\pipeline.json
+cp CameraData\_template\workers.json  CameraData\<新项目>\workers.json
+
+# 编辑 pipeline.json   → 修改 project、preset、litegs_path
+# 编辑 workers.json    → 修改每台机器的 hostname / ip
+```
+
+配置模板和字段说明见 [CameraData/_template/](CameraData/_template/)。
+
+### 相关文档
+
+| 文档 | 内容 |
+|------|------|
+| [Docs/PLAN/v7-distributed-training.md](Docs/PLAN/v7-distributed-training.md) | v7 分布式训练设计方案 |
+| [Docs/PLAN/ssh-setup-guide.md](Docs/PLAN/ssh-setup-guide.md) | SSH 免密配置（前置步骤） |
+| [Docs/V5_V6_USAGE.md](Docs/V5_V6_USAGE.md) | v5/v6 管线使用手册 |
+
+---
+
 ## Localizing the SuperSplat Editor
 
 The currently supported languages are available here:

@@ -135,6 +135,50 @@ def load_workers(workers_config_path: Path) -> list[WorkerNode]:
     return hosts + remotes
 
 
+def auto_detect_host(workers: list[WorkerNode]) -> None:
+    """Set ``is_host = True`` on whichever worker matches the local machine.
+
+    Matches by hostname first, then by IP as fallback.  If no worker
+    matches, raises RuntimeError.
+
+    Call this **once** after ``load_workers()`` — it mutates the list
+    in-place so every downstream caller sees the correct host.
+    """
+    local_hostname = socket.gethostname().lower()
+    local_ip = _get_local_ip()
+
+    # try hostname match first
+    for w in workers:
+        if w.hostname.lower() == local_hostname:
+            w.is_host = True
+            return
+
+    # fallback: IP match
+    for w in workers:
+        if w.ip == local_ip or w.ip == "127.0.0.1":
+            w.is_host = True
+            return
+
+    raise RuntimeError(
+        f"本机 hostname ({local_hostname}) / IP ({local_ip}) 未匹配到 "
+        f"workers.json 中的任何 Worker。请在 workers.json 中确认本机的 "
+        f"hostname 或 IP 已正确填写。"
+    )
+
+
+def _get_local_ip() -> str:
+    """Return the primary LAN IP of this machine, or '127.0.0.1'."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 # ── SSH / remote execution ─────────────────────────────────────────────────────
 
 def _build_ssh_cmd(worker: WorkerNode, remote_command: str) -> list[str]:

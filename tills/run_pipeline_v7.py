@@ -35,7 +35,7 @@ from _shared import (
 
 # distributed utilities (SSH, SCP, WorkerNode, ProgressDisplay)
 from _distributed import (
-    WorkerNode, load_workers,
+    WorkerNode, load_workers, auto_detect_host,
     ssh_run, ssh_run_async,
     scp_send, scp_recv,
     validate_workers,
@@ -474,6 +474,8 @@ def main():
                 sys.exit(1)
 
             workers = load_workers(workers_config_path)
+            # auto-detect which worker is THIS machine → sets is_host = True
+            auto_detect_host(workers)
             print(f"\n  加载了 {len(workers)} 个 Worker:")
             for w in workers:
                 tag = " [HOST]" if w.is_host else ""

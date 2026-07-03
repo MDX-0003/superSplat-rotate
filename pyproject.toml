@@ -1,0 +1,14 @@
+[project]
+name = "supersplat-pipeline"
+version = "7.0"
+description = "SuperSplat 3DGS pipeline — Playwright automation, PLY processing, distributed training"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "playwright",
+]
+
+[tool.uv]
+# Python scripts live under tills/ and tills_ply/
+# Run with:  uv run python tills/run_pipeline_v7.py --config ...
