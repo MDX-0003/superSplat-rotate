@@ -316,6 +316,111 @@ def kill_worker_process(worker: WorkerNode, status_path: str,
             return False, f"SSH kill failed: {e}"
 
 
+# ── cleanup ──────────────────────────────────────────────────────────────────────
+
+def cleanup_frame(worker: WorkerNode, proj_dir: Path,
+                  sub_dir: str, frame_id: str,
+                  level: str = "soft",
+                  frame_dirname: str | None = None,
+                  dry_run: bool = False) -> dict:
+    """Delete training artifacts for a specific frame across all workers.
+
+    Best-effort — missing files are silently skipped.
+
+    Args:
+        worker: WorkerNode whose artifacts to clean.
+        proj_dir: Path to ``CameraData/<project>/`` on the host.
+        sub_dir: MMDD sub-directory name (e.g. ``"0703"``).
+        frame_id: HHMMSS frame identifier (e.g. ``"120849"``).
+        level: ``"soft"`` (keep raw_images) or ``"hard"`` (delete raw_images too).
+        frame_dirname: Full raw_images subdirectory name
+                       (e.g. ``"120-2026-06-30-120849"``). Required for hard level.
+        dry_run: If True, only compute deletion list without actually deleting.
+
+    Returns:
+        Dict with ``status``, ``level``, ``deleted`` (list of path strings),
+        and ``skipped`` (list).
+    """
+    import shutil as _shutil
+
+    deleted: list[str] = []
+    skipped: list[str] = []
+
+    def _rm(p: Path) -> str:
+        """Try to delete a path. Returns 'deleted', 'skipped', or 'error:...'."""
+        if dry_run:
+            return "would_delete" if p.exists() else "skipped"
+        try:
+            if p.is_dir():
+                _shutil.rmtree(p, ignore_errors=True)
+            elif p.is_file():
+                p.unlink(missing_ok=True)
+            return "deleted"
+        except Exception as e:
+            return f"error: {e}"
+
+    # 1. Supersplat PLY
+    ply_path = proj_dir / f"{sub_dir}-{frame_id}.ply"
+    result = _rm(ply_path)
+    if "error" in result:
+        skipped.append(f"ply({result})")
+    else:
+        deleted.append(str(ply_path))
+
+    # 2. Worker results/<sub_dir>/
+    worker_results = Path(worker.litegs_path) / "results" / sub_dir
+    if worker.is_host:
+        result = _rm(worker_results)
+        if "error" in result:
+            skipped.append(f"worker_results({result})")
+        else:
+            deleted.append(str(worker_results))
+    else:
+        if not dry_run:
+            cmd = f'if exist "{worker_results}" rmdir /s /q "{worker_results}"'
+            try:
+                ssh_run(worker, cmd, timeout=30)
+                deleted.append(f"[{worker.id}] {worker_results}")
+            except Exception as e:
+                skipped.append(f"[{worker.id}] worker_results({e})")
+        else:
+            deleted.append(f"[{worker.id}] {worker_results} (dry_run)")
+
+    # 3. Worker data/<sub_dir>/<frame_dirname>/
+    if frame_dirname:
+        worker_data = Path(worker.litegs_path) / "data" / sub_dir / frame_dirname
+        if worker.is_host:
+            result = _rm(worker_data)
+            if "error" in result:
+                skipped.append(f"worker_data({result})")
+            else:
+                deleted.append(str(worker_data))
+        else:
+            if not dry_run:
+                cmd = f'if exist "{worker_data}" rmdir /s /q "{worker_data}"'
+                try:
+                    ssh_run(worker, cmd, timeout=30)
+                    deleted.append(f"[{worker.id}] {worker_data}")
+                except Exception as e:
+                    skipped.append(f"[{worker.id}] worker_data({e})")
+            else:
+                deleted.append(f"[{worker.id}] {worker_data} (dry_run)")
+
+    # 4. Supersplat raw_images/<frame_dirname>/ (hard only)
+    if level == "hard":
+        if frame_dirname:
+            raw_dir = proj_dir / "raw_images" / frame_dirname
+            result = _rm(raw_dir)
+            if "error" in result:
+                skipped.append(f"raw_images({result})")
+            else:
+                deleted.append(str(raw_dir))
+        else:
+            skipped.append("raw_images(frame_dirname not provided)")
+
+    return {"status": "ok", "level": level, "deleted": deleted, "skipped": skipped}
+
+
 # ── SSH / remote execution ─────────────────────────────────────────────────────
 
 def _build_ssh_cmd(worker: WorkerNode, remote_command: str) -> list[str]:
