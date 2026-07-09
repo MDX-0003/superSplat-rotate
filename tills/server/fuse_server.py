@@ -602,7 +602,10 @@ def run_render(state: FuseState, cfg: dict,
                 _log("ERROR: JSON 导入失败 (total_frames=0)")
                 return
 
-            renders_dir = proj_dir / "renders"
+            renders_dir = (
+                Path(cfg["renders_path"]) if "renders_path" in cfg
+                else proj_dir / "renders"
+            )
             renders_dir.mkdir(parents=True, exist_ok=True)
             expected_filename = f"{proj_name}.mp4"
             success = await render_video(page, total_frames, renders_dir,

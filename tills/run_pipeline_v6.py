@@ -272,7 +272,10 @@ async def async_main_v6(args, cfg):
         else:
             total_frames = await verify_timeline(page)
 
-        renders_dir = proj_dir / "renders"
+        renders_dir = (
+            Path(cfg["renders_path"]) if "renders_path" in cfg
+            else proj_dir / "renders"
+        )
         renders_dir.mkdir(parents=True, exist_ok=True)
         success = await render_video(page, total_frames, renders_dir,
                                      expected_filename, fps)
