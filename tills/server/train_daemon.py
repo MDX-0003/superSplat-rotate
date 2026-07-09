@@ -540,7 +540,7 @@ def main_loop(state: TrainState, cfg: dict,
                         state.update_frame(key, status="checking")
                         print(f"  [scan] NEW {key} ({fd.name}) "
                               f"— {cur[0]} files, expect {expected or '?'}")
-                    elif existing.status == "checking":
+                    elif existing.status in ("new", "checking"):
                         if count_ok and stable:
                             state.update_frame(key, status="ready")
                             _emit_log("daemon", f"帧就绪: {key} ({fd.name})")
