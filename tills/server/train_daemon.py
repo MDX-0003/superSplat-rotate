@@ -35,60 +35,8 @@ from tills._distributed import (
 )
 from tills._shared import load_preset, parse_frame_dirname
 from tills.server._server import (
-    SSEBroadcaster, SSEHandler, create_server, run_server,
+    SSEBroadcaster, SSEHandler, create_server, run_server, FileLogger,
 )
-
-
-# ── Logging ──────────────────────────────────────────────────────────────────────
-
-class DaemonLogger:
-    """Writes daemon events and per-worker training output to disk.
-
-    Directory layout::
-
-        CameraData/<proj>/logs/daemon-20260709-143000/
-        ├── daemon.log       # scan, dispatch, errors, lifecycle
-        ├── host.log          # host worker training stdout
-        └── worker1.log       # remote worker training stdout (one per worker)
-
-    All writes are flushed immediately so logs survive a crash.
-    """
-
-    def __init__(self, proj_dir: Path):
-        import datetime
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        self._log_dir = proj_dir / "logs" / f"daemon-{ts}"
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._handles: dict[str, object] = {}  # name → file handle
-        self._write_lock = threading.Lock()
-        print(f"  logs → {self._log_dir}")
-
-    def _write(self, name: str, line: str):
-        """Append a line to a named log file (thread-safe)."""
-        with self._write_lock:
-            if name not in self._handles:
-                path = self._log_dir / f"{name}.log"
-                self._handles[name] = open(path, "a", encoding="utf-8",
-                                           buffering=1)
-            f = self._handles[name]
-            ts = time.strftime("%H:%M:%S")
-            f.write(f"[{ts}] {line}\n")
-            f.flush()
-
-    def daemon(self, msg: str):
-        """Log a daemon-level event."""
-        self._write("daemon", msg)
-
-    def worker(self, worker_id: str, line: str):
-        """Log a line of training output from a worker."""
-        self._write(worker_id, line)
-
-    def close(self):
-        for h in self._handles.values():
-            try:
-                h.close()
-            except Exception:
-                pass
 
 
 # ── State ────────────────────────────────────────────────────────────────────────
@@ -180,39 +128,43 @@ class TrainState:
 _PAGE_CSS = """
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Consolas,monospace;background:#1a1a2e;color:#e0e0e0;
+  body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+       background:#f5f0e8;color:#3e3a35;
        padding:20px}
-  h1{color:#7ec8e3;margin-bottom:10px}
-  h2{color:#7ec8e3;margin:15px 0 10px}
-  .info{color:#888;margin-bottom:20px;font-size:14px}
-  table{width:100%;border-collapse:collapse;margin-bottom:20px}
-  th{text-align:left;padding:8px 10px;background:#16213e;color:#7ec8e3;
-     font-size:13px}
-  td{padding:8px 10px;border-bottom:1px solid #16213e;font-size:13px}
-  tr:hover{background:#16213e}
-  .st-new{color:#888}
-  .st-checking{color:#f0c040}
-  .st-ready{color:#4caf50}
-  .st-copying{color:#2196f3}
-  .st-training{color:#03a9f4;font-weight:bold}
-  .st-done{color:#4caf50}
-  .st-failed{color:#f44336}
-  button{background:#2196f3;color:#fff;border:none;padding:4px 10px;
+  h1{color:#5b7c5a;margin-bottom:10px;font-size:22px}
+  h2{color:#5b7c5a;margin:15px 0 10px;font-size:17px}
+  .info{color:#7a7368;margin-bottom:20px;font-size:14px}
+  table{width:100%;border-collapse:collapse;margin-bottom:20px;
+        background:#fffdf7;border-radius:6px;overflow:hidden;
+        box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  th{text-align:left;padding:8px 10px;background:#e8e0d3;color:#5b5a4e;
+     font-size:13px;font-weight:600}
+  td{padding:8px 10px;border-bottom:1px solid #e8e0d3;font-size:13px}
+  tr:hover{background:#faf3e3}
+  .st-new{color:#aaa295}
+  .st-checking{color:#b8860b}
+  .st-ready{color:#2e7d32}
+  .st-copying{color:#1565c0}
+  .st-training{color:#0277bd;font-weight:bold}
+  .st-done{color:#2e7d32}
+  .st-failed{color:#c62828}
+  button{background:#6b8e6b;color:#fff;border:none;padding:4px 10px;
          cursor:pointer;border-radius:3px;font-size:12px;margin:1px}
-  button.danger{background:#f44336}
-  button.warn{background:#ff9800}
-  button:hover{opacity:0.8}
+  button.danger{background:#c0392b}
+  button.warn{background:#d4850a}
+  button:hover{opacity:0.85}
   button:disabled{opacity:0.4;cursor:default}
-  .log-panel{background:#0d1117;border:1px solid #30363d;border-radius:4px;
+  .log-panel{background:#fdfaf2;border:1px solid #d9cfb8;border-radius:4px;
              margin-bottom:10px}
-  .log-header{padding:6px 12px;background:#161b22;cursor:pointer;
-              display:flex;justify-content:space-between;font-size:13px}
+  .log-header{padding:6px 12px;background:#ede4d3;cursor:pointer;
+              display:flex;justify-content:space-between;font-size:13px;
+              color:#5b5a4e}
   .log-body{padding:8px 12px;max-height:300px;overflow-y:auto;
-            font-size:12px;line-height:1.5;display:none;white-space:pre-wrap;
-            font-family:Consolas,monospace}
+            font-size:12px;line-height:1.6;display:none;white-space:pre-wrap;
+            font-family:Consolas,"Fira Code",monospace}
   .log-body.open{display:block}
   .log-body::-webkit-scrollbar{width:6px}
-  .log-body::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+  .log-body::-webkit-scrollbar-thumb{background:#c9bfa8;border-radius:3px}
 </style>
 """
 
@@ -422,7 +374,7 @@ def handle_action(state: TrainState, body: dict) -> dict:
 # ── Main loop ────────────────────────────────────────────────────────────────────
 
 def main_loop(state: TrainState, cfg: dict,
-              broadcaster: SSEBroadcaster, logger: DaemonLogger,
+              broadcaster: SSEBroadcaster, logger: FileLogger,
               force: bool,
               frames_filter: list[str] | None,
               stop_event: threading.Event):
@@ -458,9 +410,9 @@ def main_loop(state: TrainState, cfg: dict,
         broadcaster.broadcast("log", f"{worker_id} {line}")
         # Also write to disk — daemon vs worker separated
         if worker_id == "daemon":
-            logger.daemon(line)
+            logger.write("daemon", line)
         else:
-            logger.worker(worker_id, line)
+            logger.write(worker_id, line)
 
     def _emit_status():
         broadcaster.broadcast("status",
@@ -937,8 +889,8 @@ def main():
     })
 
     # Set up logger
-    logger = DaemonLogger(proj_dir)
-    logger.daemon(f"daemon started — project={cfg['project']} "
+    logger = FileLogger(proj_dir, prefix="daemon")
+    logger.write("daemon", f"daemon started — project={cfg['project']} "
                   f"raw_images={cfg.get('raw_images_path', proj_dir / 'raw_images')}")
 
     # Start main loop in background thread
@@ -960,7 +912,7 @@ def main():
     finally:
         stop_event.set()
         loop_thread.join(timeout=10)
-        logger.daemon("daemon stopped")
+        logger.write("daemon","daemon stopped")
         logger.close()
         print("  Train daemon stopped.")
 

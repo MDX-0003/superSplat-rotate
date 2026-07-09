@@ -26,7 +26,7 @@ if str(_project_root) not in sys.path:
 
 from tills._shared import ROOT, load_preset
 from tills.server._server import (
-    SSEBroadcaster, SSEHandler, create_server, run_server,
+    SSEBroadcaster, SSEHandler, create_server, run_server, FileLogger,
 )
 
 TILLS_PLY_DIR = _project_root / "tills_ply"
@@ -42,9 +42,15 @@ class FuseState:
         self.preset_name = preset_name
         self.poll_interval = poll_interval
         self.ply_files: list[dict] = []      # [{name, size_mb, mtime, path}]
-        self.current_task: str | None = None  # "fuse" | "render" | None
+        self.active_tasks: set[str] = set()   # {"fuse", "render"} — independent
         self.task_log: list[str] = []
         self._lock = threading.Lock()
+
+    @property
+    def current_task(self) -> str | None:
+        """Backward-compat: first active task, for display only."""
+        with self._lock:
+            return next(iter(self.active_tasks), None)
 
     def scan_plys(self) -> bool:
         """Scan project dir for PLYs. Returns True if list changed."""
@@ -75,7 +81,7 @@ class FuseState:
         with self._lock:
             return {
                 "project": self.project,
-                "current_task": self.current_task,
+                "active_tasks": list(self.active_tasks),
                 "ply_count": len(self.ply_files),
                 "ply_files": list(self.ply_files),
             }
@@ -86,25 +92,30 @@ class FuseState:
 _CSS = """
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Consolas,monospace;background:#1a1a2e;color:#e0e0e0;padding:20px}
-  h1{color:#7ec8e3;margin-bottom:10px}
-  h2{color:#7ec8e3;margin:15px 0 10px}
-  .info{color:#888;margin-bottom:20px;font-size:14px}
-  table{width:100%;border-collapse:collapse;margin-bottom:10px}
-  th{text-align:left;padding:8px 10px;background:#16213e;color:#7ec8e3;font-size:13px}
-  td{padding:8px 10px;border-bottom:1px solid #16213e;font-size:13px}
-  tr:hover{background:#16213e}
-  button{background:#2196f3;color:#fff;border:none;padding:6px 14px;cursor:pointer;
+  body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+       background:#f5f0e8;color:#3e3a35;padding:20px}
+  h1{color:#5b7c5a;margin-bottom:10px;font-size:22px}
+  h2{color:#5b7c5a;margin:15px 0 10px;font-size:17px}
+  .info{color:#7a7368;margin-bottom:20px;font-size:14px}
+  table{width:100%;border-collapse:collapse;margin-bottom:10px;
+        background:#fffdf7;border-radius:6px;overflow:hidden;
+        box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  th{text-align:left;padding:8px 10px;background:#e8e0d3;color:#5b5a4e;
+     font-size:13px;font-weight:600}
+  td{padding:8px 10px;border-bottom:1px solid #e8e0d3;font-size:13px}
+  tr:hover{background:#faf3e3}
+  button{background:#6b8e6b;color:#fff;border:none;padding:6px 14px;cursor:pointer;
          border-radius:3px;font-size:13px;margin:4px}
   button:disabled{opacity:0.4;cursor:default}
-  button.fuse{background:#4caf50}
-  button.render-btn{background:#ff9800}
-  .log-panel{background:#0d1117;border:1px solid #30363d;border-radius:4px;
+  button.fuse{background:#5b7c5a}
+  button.render-btn{background:#d4850a}
+  .log-panel{background:#fdfaf2;border:1px solid #d9cfb8;border-radius:4px;
              margin-top:15px}
   .log-body{padding:10px 14px;max-height:400px;overflow-y:auto;font-size:12px;
-            line-height:1.5;white-space:pre-wrap;font-family:Consolas,monospace}
+            line-height:1.6;white-space:pre-wrap;
+            font-family:Consolas,"Fira Code",monospace}
   .log-body::-webkit-scrollbar{width:6px}
-  .log-body::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+  .log-body::-webkit-scrollbar-thumb{background:#c9bfa8;border-radius:3px}
 </style>
 """
 
@@ -112,7 +123,6 @@ _CSS = """
 def build_fuse_page(state: FuseState) -> str:
     with state._lock:
         plys = list(state.ply_files)
-        current = state.current_task
         log_lines = list(state.task_log[-50:])
 
     rows = ""
@@ -125,21 +135,24 @@ def build_fuse_page(state: FuseState) -> str:
           <td>{p['mtime']}</td>
         </tr>"""
 
-    disabled = 'disabled' if current else ''
-    task_status = f"任务进行中: {current}" if current else "空闲"
+    # fuse and render are independent — only disable the running one
+    with state._lock:
+        active = set(state.active_tasks)
+    fuse_disabled = 'disabled' if 'fuse' in active else ''
+    render_disabled = 'disabled' if 'render' in active else ''
+    task_str = ', '.join(sorted(active)) if active else '空闲'
 
     return f"""<!DOCTYPE html>
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="30">
   <title>v8 Fuse — {state.project}</title>
   {_CSS}
 </head>
 <body>
   <h1>🧩 v8 Fuse Server — project: {state.project}</h1>
   <div class="info">
-    可用 PLY: {len(plys)} 个 | 状态: {task_status}
+    可用 PLY: {len(plys)} 个 | 状态: {task_str}
   </div>
   <table>
     <thead>
@@ -149,8 +162,8 @@ def build_fuse_page(state: FuseState) -> str:
   </table>
   <p style="color:#888;font-size:13px;">默认全不勾选，手动选择最新 2-3 个。</p>
   <div>
-    <button class="fuse" {disabled} onclick="doFuse()">fuse + clip 选中</button>
-    <button class="render-btn" {disabled} onclick="doRender()">render 选中</button>
+    <button class="fuse" {fuse_disabled} onclick="doFuse()">fuse + clip 选中</button>
+    <button class="render-btn" {render_disabled} onclick="doRender()">render 选中</button>
   </div>
   <div class="log-panel">
     <div class="log-body" id="task-log">{chr(10).join(log_lines)}</div>
@@ -202,7 +215,7 @@ def build_fuse_page(state: FuseState) -> str:
 
 def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                   indices: list[int], force: bool,
-                  broadcaster: SSEBroadcaster):
+                  broadcaster: SSEBroadcaster, logger: FileLogger):
     """Execute fuse_ply.py → clip_ply.py in a background thread."""
     proj_dir = ROOT / f"CameraData/{cfg['project']}"
     proj_path = f"CameraData/{cfg['project']}"
@@ -215,6 +228,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
     def _log(line: str):
         state.add_log(line)
         broadcaster.broadcast("log", line)
+        logger.write("fuse", line)
 
     try:
         # Step 1: Fuse
@@ -286,19 +300,22 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
     except Exception as e:
         _log(f"ERROR: {e}")
     finally:
-        state.current_task = None
+        with state._lock:
+            state.active_tasks.discard("fuse")
         state.scan_plys()
         broadcaster.broadcast("status", "done")
 
 
 def run_render(state: FuseState, cfg: dict, preset: dict,
-               indices: list[int], broadcaster: SSEBroadcaster):
+               indices: list[int], broadcaster: SSEBroadcaster,
+               logger: FileLogger):
     """Execute Playwright render in a background thread."""
     proj_dir = ROOT / f"CameraData/{cfg['project']}"
 
     def _log(line: str):
         state.add_log(line)
         broadcaster.broadcast("log", line)
+        logger.write("render", line)
 
     try:
         plys = sorted(proj_dir.glob("*.ply"))
@@ -310,14 +327,11 @@ def run_render(state: FuseState, cfg: dict, preset: dict,
         _log(f"render: {ply_path.name}")
 
         # Reuse v6's render logic via import
-        # Build a minimal args namespace for async_main_v6
         class _Args:
             config = cfg.get("_config_path", "")
             force = False
             steps = "render"
 
-        # The v6 render path uses the ply selected through its own UI flow.
-        # For v8, we set the ply path directly and trigger render.
         from run_pipeline_v6 import async_main_v6
         asyncio.run(async_main_v6(_Args(), cfg))
 
@@ -326,22 +340,25 @@ def run_render(state: FuseState, cfg: dict, preset: dict,
     except Exception as e:
         _log(f"RENDER ERROR: {e}")
     finally:
-        state.current_task = None
+        with state._lock:
+            state.active_tasks.discard("render")
         broadcaster.broadcast("status", "done")
 
 
 # ── HTTP Handler ─────────────────────────────────────────────────────────────────
 
 def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
-                      force: bool, broadcaster: SSEBroadcaster):
+                      force: bool, broadcaster: SSEBroadcaster,
+                      logger: FileLogger):
     def _root(handler):
         return build_fuse_page(state), "text/html; charset=utf-8"
 
     def _fuse(handler, body):
-        if state.current_task:
-            return json.dumps({"status": "error",
-                               "message": f"任务进行中: {state.current_task}"}), \
-                   "application/json; charset=utf-8"
+        with state._lock:
+            if "fuse" in state.active_tasks:
+                return json.dumps({"status": "error",
+                                   "message": "fuse+clip 已在运行"}), \
+                       "application/json; charset=utf-8"
         if isinstance(body, str):
             try:
                 body = json.loads(body)
@@ -351,10 +368,11 @@ def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
         if not indices:
             return json.dumps({"status": "error", "message": "未选择 PLY"}), \
                    "application/json; charset=utf-8"
-        state.current_task = "fuse+clip"
+        with state._lock:
+            state.active_tasks.add("fuse")
         t = threading.Thread(
             target=run_fuse_clip,
-            args=(state, cfg, preset, indices, force, broadcaster),
+            args=(state, cfg, preset, indices, force, broadcaster, logger),
             daemon=True,
         )
         t.start()
@@ -363,10 +381,11 @@ def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
                "application/json; charset=utf-8"
 
     def _render(handler, body):
-        if state.current_task:
-            return json.dumps({"status": "error",
-                               "message": f"任务进行中: {state.current_task}"}), \
-                   "application/json; charset=utf-8"
+        with state._lock:
+            if "render" in state.active_tasks:
+                return json.dumps({"status": "error",
+                                   "message": "render 已在运行"}), \
+                       "application/json; charset=utf-8"
         if isinstance(body, str):
             try:
                 body = json.loads(body)
@@ -376,10 +395,11 @@ def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
         if not indices:
             return json.dumps({"status": "error", "message": "未选择 PLY"}), \
                    "application/json; charset=utf-8"
-        state.current_task = "render"
+        with state._lock:
+            state.active_tasks.add("render")
         t = threading.Thread(
             target=run_render,
-            args=(state, cfg, preset, indices, broadcaster),
+            args=(state, cfg, preset, indices, broadcaster, logger),
             daemon=True,
         )
         t.start()
@@ -433,10 +453,12 @@ def main():
     preset = load_preset(cfg["preset"])
     poll_interval = cfg.get("poll_interval", 5)
 
+    proj_dir = ROOT / f"CameraData/{cfg['project']}"
     state = FuseState(project=cfg["project"],
                       preset_name=cfg["preset"],
                       poll_interval=poll_interval)
     broadcaster = SSEBroadcaster()
+    logger = FileLogger(proj_dir, prefix="fuse")
 
     # Scan initial PLY list
     state.scan_plys()
@@ -444,7 +466,7 @@ def main():
     # Build handler class dynamically
     FuseHandler = type("FuseHandler", (SSEHandler,), {
         "routes": _make_fuse_routes(state, cfg, preset,
-                                    args_p.force, broadcaster),
+                                    args_p.force, broadcaster, logger),
         "sse_paths": {"/events"},
     })
 

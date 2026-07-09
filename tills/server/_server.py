@@ -9,11 +9,60 @@ only the features actually needed by v8 daemons.
 import json
 import queue
 import threading
+import time as _time
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from socketserver import ThreadingMixIn
 from typing import Callable
 
+
+# ── File-based logger (shared by train_daemon and fuse_server) ────────────────────
+
+class FileLogger:
+    """Thread-safe file logger with one handle per named stream.
+
+    Directory layout::
+
+        <proj_dir>/logs/<prefix>-<YYYYMMDD-HHMMSS>/
+        ├── <stream_a>.log
+        └── <stream_b>.log
+
+    Each call to ``write(name, line)`` appends a timestamped line to
+    ``<name>.log``.  Handles are opened lazily; all writes are flushed
+    immediately so logs survive a crash.
+    """
+
+    def __init__(self, proj_dir: Path, prefix: str = "log"):
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self._log_dir = proj_dir / "logs" / f"{prefix}-{ts}"
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._handles: dict[str, object] = {}
+        self._write_lock = threading.Lock()
+        print(f"  logs → {self._log_dir}")
+
+    def write(self, name: str, line: str):
+        """Append a timestamped line to ``<name>.log`` (thread-safe)."""
+        with self._write_lock:
+            if name not in self._handles:
+                path = self._log_dir / f"{name}.log"
+                self._handles[name] = open(path, "a", encoding="utf-8",
+                                           buffering=1)
+            f = self._handles[name]
+            ts = _time.strftime("%H:%M:%S")
+            f.write(f"[{ts}] {line}\n")
+            f.flush()
+
+    def close(self):
+        for h in self._handles.values():
+            try:
+                h.close()
+            except Exception:
+                pass
+
+
+# ── HTTP server ───────────────────────────────────────────────────────────────────
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """HTTPServer that handles each request in its own thread.
