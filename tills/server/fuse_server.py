@@ -153,6 +153,18 @@ _CSS = """
             font-family:Consolas,"Fira Code",monospace}
   .log-body::-webkit-scrollbar{width:6px}
   .log-body::-webkit-scrollbar-thumb{background:#c9bfa8;border-radius:3px}
+  .preview-bar{background:#fffdf7;border:1px solid #d9cfb8;border-radius:4px;
+               padding:8px 10px;margin-bottom:8px;font-size:13px;
+               display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .preview-bar .label{color:#7a7368;white-space:nowrap}
+  .preview-bar .path{color:#3e3a35;font-family:Consolas,monospace;flex:1;
+                     word-break:break-all}
+  .preview-bar .clear{background:#c0392b;color:#fff;border:none;padding:2px 8px;
+                      cursor:pointer;border-radius:3px;font-size:11px}
+  .badge{display:inline-block;padding:1px 5px;border-radius:3px;
+         font-size:11px;font-weight:600;margin-left:4px}
+  .badge.main{background:#5b7c5a;color:#fff}
+  .badge.pos{background:#d9cfb8;color:#5b5a4e}
 </style>
 """
 
@@ -166,14 +178,14 @@ def build_fuse_page(state: FuseState) -> str:
         npm_ok = state.npm_ok
         log_lines = list(state.task_log[-50:])
 
-    # ── fuse column (multi-select) ──
+    # ── fuse column (ordered multi-select) ──
     fuse_rows = ""
     for i, p in enumerate(fuse_plys):
         fuse_rows += f"""
         <tr class="row" data-col="fuse" data-idx="{i}"
-            onclick="toggleRow(this)">
-          <td><input type="checkbox" class="fuse-cb" data-idx="{i}"
-                     onclick="event.stopPropagation()"></td>
+            data-name="{p['name']}"
+            onclick="toggleFuseRow(this)" id="fuserow-{i}">
+          <td style="width:20px"><span class="sel-mark" id="selmark-{i}"></span></td>
           <td>{p['name']}</td>
           <td>{p['size_mb']} MB</td>
           <td>{p['mtime']}</td>
@@ -238,11 +250,22 @@ def build_fuse_page(state: FuseState) -> str:
   <div class="grid">
     <!-- Fuse column -->
     <div class="col">
-      <h2>Fuse PLYs（多选）</h2>
+      <h2>Fuse PLYs（顺序敏感）</h2>
+      <div class="preview-bar" id="preview-bar" style="display:none">
+        <span class="label">选中顺序:</span>
+        <span id="preview-order"></span>
+        <span style="flex:1"></span>
+        <span class="label">→</span>
+        <span class="path" id="preview-path"></span>
+        <button class="clear" onclick="clearFuseSelection()">清空</button>
+      </div>
       <table>
         <thead><tr><th></th><th>文件名</th><th>大小</th><th>时间</th></tr></thead>
         <tbody>{fuse_rows}</tbody>
       </table>
+      <p style="color:#7a7368;font-size:11px;margin:4px 0">
+        点击选择（首个 = main，全部点保留），再次点击取消，顺序决定 combine 名称。
+      </p>
       <button class="fuse" {fuse_disabled} onclick="doFuse()">fuse + clip 选中</button>
     </div>
 
@@ -281,16 +304,78 @@ def build_fuse_page(state: FuseState) -> str:
       location.reload();
     }});
 
-    // ── row click handlers ──
-    function toggleRow(tr) {{
-      let cb = tr.querySelector('input[type="checkbox"]');
-      cb.checked = !cb.checked;
-      tr.classList.toggle('selected', cb.checked);
+    // ── ordered fuse selection ──
+    let fuseOrder = [];  // array of {{idx, name}} in click order
+
+    function updateFuseUI() {{
+      // Clear all highlights / badges
+      for (let r of document.querySelectorAll('tr[data-col="fuse"]')) {{
+        r.classList.remove('selected');
+      }}
+      for (let m of document.querySelectorAll('.sel-mark')) {{
+        m.innerHTML = '';
+      }}
+      // Apply highlights + badges in order
+      fuseOrder.forEach((item, pos) => {{
+        let tr = document.getElementById('fuserow-' + item.idx);
+        if (tr) {{
+          tr.classList.add('selected');
+          let mark = document.getElementById('selmark-' + item.idx);
+          if (pos === 0) {{
+            mark.innerHTML = '<span class="badge main">主</span>';
+          }} else {{
+            mark.innerHTML = '<span class="badge pos">#' + (pos + 1) + '</span>';
+          }}
+        }}
+      }});
+      // Preview bar
+      let bar = document.getElementById('preview-bar');
+      let orderEl = document.getElementById('preview-order');
+      let pathEl = document.getElementById('preview-path');
+      if (fuseOrder.length === 0) {{
+        bar.style.display = 'none';
+      }} else {{
+        bar.style.display = 'flex';
+        let names = fuseOrder.map(f => f.name.replace('.ply','').split('-').pop());
+        orderEl.textContent = names.join(' → ');
+        // Build expected combine name: extract frame_ids, deduplicate sub_dir
+        let sub = '';
+        let ids = [];
+        for (let f of fuseOrder) {{
+          let parts = f.name.replace('.ply','').split('-');
+          if (parts.length >= 2) {{
+            if (!sub) sub = parts[0];
+            ids.push(parts[parts.length - 1]);
+          }} else {{
+            ids.push(f.name.replace('.ply',''));
+          }}
+        }}
+        pathEl.textContent = 'combine-' + ids.join('-') + '.ply';
+      }}
     }}
+
+    function toggleFuseRow(tr) {{
+      let idx = parseInt(tr.dataset.idx);
+      let name = tr.dataset.name;
+      // Check if already selected
+      let pos = fuseOrder.findIndex(f => f.idx === idx);
+      if (pos >= 0) {{
+        fuseOrder.splice(pos, 1);
+      }} else {{
+        fuseOrder.push({{idx: idx, name: name}});
+      }}
+      updateFuseUI();
+    }}
+
+    function clearFuseSelection() {{
+      fuseOrder = [];
+      updateFuseUI();
+    }}
+
+    // ── render / json selection (unchanged) ──
     function selectOne(tr) {{
       let radio = tr.querySelector('input[type="radio"]');
       radio.checked = true;
-      // Unselect siblings
       let col = tr.dataset.col;
       for (let r of document.querySelectorAll('tr[data-col="' + col + '"]')) {{
         r.classList.remove('selected');
@@ -298,18 +383,6 @@ def build_fuse_page(state: FuseState) -> str:
       tr.classList.add('selected');
     }}
 
-    // Sync checkbox changes with row highlight
-    document.querySelectorAll('.fuse-cb').forEach(cb => {{
-      cb.addEventListener('change', function() {{
-        this.closest('tr').classList.toggle('selected', this.checked);
-      }});
-    }});
-
-    // ── actions ──
-    function getFuseIndices() {{
-      let cbs = document.querySelectorAll('.fuse-cb:checked');
-      return Array.from(cbs).map(cb => parseInt(cb.dataset.idx));
-    }}
     function getRenderPlyIndex() {{
       let r = document.querySelector('input[name="render-ply"]:checked');
       return r ? parseInt(r.value) : null;
@@ -319,9 +392,10 @@ def build_fuse_page(state: FuseState) -> str:
       return r ? parseInt(r.value) : null;
     }}
 
+    // ── actions ──
     async function doFuse() {{
-      let ply_indices = getFuseIndices();
-      if (!ply_indices.length) {{ alert('请至少勾选一个 PLY'); return; }}
+      if (!fuseOrder.length) {{ alert('请至少选择一个 PLY'); return; }}
+      let ply_indices = fuseOrder.map(f => f.idx);
       let r = await fetch('/fuse', {{
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
