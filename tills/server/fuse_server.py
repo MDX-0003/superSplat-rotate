@@ -603,7 +603,7 @@ def run_render(state: FuseState, cfg: dict,
                 return
 
             renders_dir = (
-                Path(cfg["renders_path"]) if "renders_path" in cfg
+                Path(cfg["video_output_path"]) if "video_output_path" in cfg
                 else proj_dir / "renders"
             )
             renders_dir.mkdir(parents=True, exist_ok=True)
