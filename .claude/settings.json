@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "PowerShell(E:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\CameraData\\\\05\\\\rename_114_to_120.ps1)"
+    ]
+  }
+}
