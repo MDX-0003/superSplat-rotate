@@ -294,6 +294,10 @@ def build_fuse_page(state: FuseState) -> str:
         <tbody>{json_rows}</tbody>
       </table>
       <button class="render-btn" {render_disabled} onclick="doRender()">render 选中</button>
+      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>SuperSplat 未启动 (npm run serve)</p>" if not npm_ok else ""}
+      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>Render PLY 列表为空 (尚未 fuse+clip)</p>" if render_no_ply else ""}
+      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>JSON 列表为空 (jsons_path 无文件)</p>" if render_no_json else ""}
+      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>render 正在运行</p>" if 'render' in active else ""}
     </div>
   </div>
 
