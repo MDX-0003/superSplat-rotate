@@ -39,6 +39,55 @@ from tills.server._server import (
 )
 
 
+# ── Logging ──────────────────────────────────────────────────────────────────────
+
+class DaemonLogger:
+    """Writes daemon events and per-worker training output to disk.
+
+    Directory layout::
+
+        CameraData/<proj>/logs/daemon-20260709-143000/
+        ├── daemon.log       # scan, dispatch, errors, lifecycle
+        ├── host.log          # host worker training stdout
+        └── worker1.log       # remote worker training stdout (one per worker)
+
+    All writes are flushed immediately so logs survive a crash.
+    """
+
+    def __init__(self, proj_dir: Path):
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self._log_dir = proj_dir / "logs" / f"daemon-{ts}"
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._handles: dict[str, object] = {}  # name → file handle
+        print(f"  logs → {self._log_dir}")
+
+    def _write(self, name: str, line: str):
+        """Append a line to a named log file."""
+        if name not in self._handles:
+            path = self._log_dir / f"{name}.log"
+            self._handles[name] = open(path, "a", encoding="utf-8", buffering=1)
+        f = self._handles[name]
+        ts = time.strftime("%H:%M:%S")
+        f.write(f"[{ts}] {line}\n")
+        f.flush()
+
+    def daemon(self, msg: str):
+        """Log a daemon-level event."""
+        self._write("daemon", msg)
+
+    def worker(self, worker_id: str, line: str):
+        """Log a line of training output from a worker."""
+        self._write(worker_id, line)
+
+    def close(self):
+        for h in self._handles.values():
+            try:
+                h.close()
+            except Exception:
+                pass
+
+
 # ── State ────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -334,7 +383,8 @@ def handle_action(state: TrainState, body: dict) -> dict:
 # ── Main loop ────────────────────────────────────────────────────────────────────
 
 def main_loop(state: TrainState, cfg: dict,
-              broadcaster: SSEBroadcaster, force: bool,
+              broadcaster: SSEBroadcaster, logger: DaemonLogger,
+              force: bool,
               frames_filter: list[str] | None,
               stop_event: threading.Event):
     """The infinite polling loop. Runs in a background thread."""
@@ -367,6 +417,11 @@ def main_loop(state: TrainState, cfg: dict,
         if len(log_buffers[worker_id]) > MAX_LOG_LINES:
             log_buffers[worker_id] = log_buffers[worker_id][-MAX_LOG_LINES:]
         broadcaster.broadcast("log", f"{worker_id} {line}")
+        # Also write to disk — daemon vs worker separated
+        if worker_id == "daemon":
+            logger.daemon(line)
+        else:
+            logger.worker(worker_id, line)
 
     def _emit_status():
         broadcaster.broadcast("status",
@@ -451,9 +506,13 @@ def main_loop(state: TrainState, cfg: dict,
                             print(f"  [scan] READY {key} — {cur[0]} files stable")
                             _prev_snapshot.pop(key, None)  # cleanup
                         elif not count_ok:
-                            # Reset if count changes (still copying)
                             print(f"  [scan] {key} — {cur[0]} files "
-                                  f"(expect {expected}), waiting...")
+                                  f"(expect {expected}), copying in progress...")
+                            _prev_snapshot.pop(key, None)  # reset on count change
+                        else:
+                            # count OK but snapshot changed → still copying files
+                            print(f"  [scan] {key} — {cur[0]}/{expected} files, "
+                                  f"not yet stable (waiting next cycle)")
 
                 # Heartbeat: print scan summary every 6 cycles (~30s)
                 if _cycle % 6 == 0 and scanned > 0:
@@ -758,11 +817,17 @@ def main():
         "sse_paths": {"/events"},
     })
 
+    # Set up logger
+    logger = DaemonLogger(proj_dir)
+    logger.daemon(f"daemon started — project={cfg['project']} "
+                  f"raw_images={cfg.get('raw_images_path', proj_dir / 'raw_images')}")
+
     # Start main loop in background thread
     stop_event = threading.Event()
     loop_thread = threading.Thread(
         target=main_loop,
-        args=(state, cfg, broadcaster, args_p.force, args_p.frames, stop_event),
+        args=(state, cfg, broadcaster, logger,
+              args_p.force, args_p.frames, stop_event),
         daemon=True,
     )
     loop_thread.start()
@@ -776,6 +841,8 @@ def main():
     finally:
         stop_event.set()
         loop_thread.join(timeout=10)
+        logger.daemon("daemon stopped")
+        logger.close()
         print("  Train daemon stopped.")
 
 
