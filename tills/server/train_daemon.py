@@ -370,10 +370,22 @@ def handle_action(state: TrainState, body: dict) -> dict:
         if worker is None:
             return {"status": "error", "message": f"worker not found: {frame.worker_id}"}
 
+        # 1. Kill the remote/local training process via PID
         status_path = str(
             Path(worker.litegs_path) / "results" / frame.sub_dir / "_worker_status.json"
         )
         ok, msg = kill_worker_process(worker, status_path)
+
+        # 2. Terminate the local Popen wrapper (SSH process or cmd.exe shell).
+        #    This also causes the stdout reader thread to hit EOF and exit.
+        entry = state.running_processes.pop(key, None)
+        if entry is not None:
+            _worker, _proc = entry
+            try:
+                _proc.terminate()
+            except Exception:
+                pass
+
         state.update_frame(key, status="failed",
                            error_message=f"stopped by user: {msg}")
         return {"status": "ok" if ok else "error", "message": msg}
