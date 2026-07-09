@@ -11,7 +11,17 @@ import queue
 import threading
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from typing import Callable
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """HTTPServer that handles each request in its own thread.
+
+    Without this, a long-lived SSE connection blocks all other requests
+    (including page refreshes) because stdlib ``HTTPServer`` is single-threaded.
+    """
+    daemon_threads = True  # threads exit when main thread exits
 
 
 # ── SSE wire format ──────────────────────────────────────────────────────────────
@@ -99,6 +109,18 @@ class SSEHandler(BaseHTTPRequestHandler):
         """Suppress default access-log noise to stderr."""
         pass
 
+    def handle(self):
+        """Handle one or more requests, suppressing connection-abort noise.
+
+        ``ConnectionAbortedError`` fires at the framework level (in
+        ``self.rfile.readline()``) before any ``do_GET``/``do_POST``
+        handler runs, so the only place to catch it is here.
+        """
+        try:
+            super().handle()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass  # browser refreshed/navigated away — not an error
+
     def do_GET(self):
         path = self.path.split("?")[0]
 
@@ -165,11 +187,12 @@ class SSEHandler(BaseHTTPRequestHandler):
         try:
             while True:
                 try:
-                    message = q.get(timeout=15)
+                    message = q.get(timeout=1)
                     self.wfile.write(message.encode("utf-8"))
                     self.wfile.flush()
                 except queue.Empty:
-                    # Send heartbeat comment to keep connection alive
+                    # heartbeat: keep connection alive, also gives the
+                    # thread a chance to notice client disconnect quickly
                     self.wfile.write(b": heartbeat\n\n")
                     self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):
@@ -215,7 +238,7 @@ def create_server(host: str, port: int, handler_class: type,
     Returns:
         Configured ``HTTPServer`` (not yet started).
     """
-    server = HTTPServer((host, port), handler_class)
+    server = ThreadingHTTPServer((host, port), handler_class)
     # Set on the class so all request instances see it
     handler_class.broadcaster = broadcaster
     return server
