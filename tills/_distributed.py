@@ -7,6 +7,21 @@ and the terminal progress dashboard.
 
 All remote commands go through ``ssh`` / ``scp`` (Win11 built-in OpenSSH).
 The host worker (``is_host: true``) bypasses SSH — commands run locally.
+
+fail状态的几种可能
+分发帧到 Worker
+  ├─ 拷贝数据成功？
+  │   └─ 否 → failed("copy failed")
+  ├─ 启动训练成功？
+  │   └─ 否 → failed("ssh_run_async: ...")
+  ├─ 训练进程退出
+  │   ├─ exit 0 → 尝试回收 PLY
+  │   │   ├─ PLY 存在 → done ✓
+  │   │   └─ PLY 不存在 → 重试 1 次 → 还是不行 → failed("collection failed")
+  │   └─ exit ≠ 0 → 重试 1 次 → 还是 exit ≠ 0 → failed("exit 1 after retries")
+  └─ 用户点击 [停止]
+      └─ failed("stopped by user")
+
 """
 
 import json

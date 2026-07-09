@@ -588,7 +588,7 @@ def main_loop(state: TrainState, cfg: dict,
                     print(f"  [{msg}]")
                     _emit_log("daemon", msg)
 
-                # Cleanup snapshots for frames no longer in raw_images
+                # Cleanup frames whose raw_images directory was deleted
                 active_keys = set()
                 for fd in raw_dir.iterdir():
                     if fd.is_dir():
@@ -600,6 +600,18 @@ def main_loop(state: TrainState, cfg: dict,
                 for k in list(_prev_snapshot):
                     if k not in active_keys:
                         del _prev_snapshot[k]
+                # Remove from state any non-training frame whose directory
+                # no longer exists (e.g. hard-deleted).  Training frames
+                # keep running — collection will still work.
+                with state._lock:
+                    for k in list(state.frames.keys()):
+                        if k not in active_keys:
+                            fs = state.frames.get(k)
+                            if fs and fs.status != "training":
+                                del state.frames[k]
+                                state.running_processes.pop(k, None)
+                                print(f"  [scan] REMOVED {k} — "
+                                      f"raw_images directory gone")
 
             # ── 2. Dispatch ready frames (round-robin to least-loaded worker) ──
             ready_frames = [(k, fs) for k, fs in state.frames.items()
