@@ -111,6 +111,8 @@ class SSEHandler(BaseHTTPRequestHandler):
             try:
                 body, content_type = handler(self)
                 self._respond(200, body, content_type)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # client disconnected — nothing we can do
             except Exception:
                 self._respond(500, traceback.format_exc(), "text/plain")
         else:
@@ -137,6 +139,8 @@ class SSEHandler(BaseHTTPRequestHandler):
             try:
                 result, content_type = handler(self, body)
                 self._respond(200, result, content_type)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass  # client disconnected
             except Exception:
                 self._respond(500, traceback.format_exc(), "text/plain")
         else:
@@ -174,7 +178,7 @@ class SSEHandler(BaseHTTPRequestHandler):
             self.broadcaster.unsubscribe(q)
 
     def _respond(self, code: int, body, content_type: str):
-        """Send an HTTP response."""
+        """Send an HTTP response. Silently drops on client disconnect."""
         if isinstance(body, (dict, list)):
             body_str = json.dumps(body, ensure_ascii=False)
             if "text/plain" in content_type:
@@ -184,12 +188,16 @@ class SSEHandler(BaseHTTPRequestHandler):
 
         body_bytes = body_str.encode("utf-8")
 
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body_bytes)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body_bytes)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body_bytes)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body_bytes)
+        except (BrokenPipeError, ConnectionResetError,
+                ConnectionAbortedError, OSError):
+            pass  # client disconnected — not an error worth logging
 
 
 # ── Server factory ───────────────────────────────────────────────────────────────

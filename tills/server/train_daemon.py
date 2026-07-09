@@ -30,7 +30,7 @@ if str(_project_root) not in sys.path:
 
 from tills._distributed import (
     WorkerNode, load_workers, auto_detect_host, validate_workers,
-    ssh_run_async, check_frame_ready, kill_worker_process, cleanup_frame,
+    ssh_run_async, kill_worker_process, cleanup_frame,
     read_worker_status, scp_send_multi, ROOT,
 )
 from tills._shared import load_preset, parse_frame_dirname
@@ -256,7 +256,6 @@ def build_page(state: TrainState) -> str:
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="30">
   <title>v8 Train — {d['project']}</title>
   {_PAGE_CSS}
 </head>
@@ -348,6 +347,21 @@ def main_loop(state: TrainState, cfg: dict,
     log_buffers: dict[str, list[str]] = defaultdict(list)
     MAX_LOG_LINES = 500
 
+    # Cross-cycle snapshot cache for readiness detection.
+    # Keyed by frame key; stores (file_count, set_of_names, {name:size}) from
+    # the PREVIOUS cycle. When the current cycle's snapshot matches, the frame
+    # is stable — no extra sleep needed.
+    _prev_snapshot: dict[str, tuple] = {}
+
+    def _snapshot_dir(d: Path) -> tuple[int, set[str], dict[str, int]]:
+        """Return (count, set_of_names, {name: size})."""
+        files = list(d.iterdir())
+        return (
+            len(files),
+            {f.name for f in files},
+            {f.name: f.stat().st_size for f in files},
+        )
+
     def _emit_log(worker_id: str, line: str):
         log_buffers[worker_id].append(line)
         if len(log_buffers[worker_id]) > MAX_LOG_LINES:
@@ -360,8 +374,10 @@ def main_loop(state: TrainState, cfg: dict,
 
     print(f"  Train daemon main loop started. "
           f"raw_images={raw_dir}, poll={state.poll_interval}s")
+    _cycle = 0
 
     while not stop_event.is_set():
+        _cycle += 1
         try:
             # Refresh worker online status
             online_workers = [w for w in state.workers if w.is_online]
@@ -372,9 +388,11 @@ def main_loop(state: TrainState, cfg: dict,
 
             # ── 1. Scan raw_images/ ──
             if raw_dir.is_dir():
+                scanned = 0
                 for fd in sorted(raw_dir.iterdir()):
                     if not fd.is_dir():
                         continue
+                    scanned += 1
 
                     try:
                         sub_dir, frame_id = parse_frame_dirname(fd.name)
@@ -395,13 +413,71 @@ def main_loop(state: TrainState, cfg: dict,
                         state.update_frame(key, status="done")
                         continue
 
-                    # Frame ready check
-                    if existing is None or existing.status in ("new", "checking"):
+                    # ── Cross-cycle stability check ──
+                    # Take a snapshot now, compare with previous cycle's.
+                    # The poll interval (5s) provides the stability window.
+                    cur = _snapshot_dir(fd)
+                    prev = _prev_snapshot.get(key)
+
+                    # Count validation
+                    expected = None
+                    if img_num is not None:
+                        expected = img_num
+                    else:
+                        try:
+                            expected = int(fd.name.split("-")[0])
+                        except (ValueError, IndexError):
+                            pass
+
+                    count_ok = (expected is None or cur[0] == expected)
+                    stable = (prev is not None
+                              and cur[0] == prev[0]
+                              and cur[1] == prev[1]
+                              and cur[2] == prev[2])
+
+                    # Store current snapshot for next cycle
+                    _prev_snapshot[key] = cur
+
+                    if existing is None:
+                        # First discovery
                         state.add_frame(frame_id, sub_dir, fd.name)
                         state.update_frame(key, status="checking")
-                        if check_frame_ready(fd, expected_count=img_num):
+                        print(f"  [scan] NEW {key} ({fd.name}) "
+                              f"— {cur[0]} files, expect {expected or '?'}")
+                    elif existing.status == "checking":
+                        if count_ok and stable:
                             state.update_frame(key, status="ready")
                             _emit_log("daemon", f"帧就绪: {key} ({fd.name})")
+                            print(f"  [scan] READY {key} — {cur[0]} files stable")
+                            _prev_snapshot.pop(key, None)  # cleanup
+                        elif not count_ok:
+                            # Reset if count changes (still copying)
+                            print(f"  [scan] {key} — {cur[0]} files "
+                                  f"(expect {expected}), waiting...")
+
+                # Heartbeat: print scan summary every 6 cycles (~30s)
+                if _cycle % 6 == 0 and scanned > 0:
+                    ready = sum(1 for fs in state.frames.values()
+                                if fs.status == "ready")
+                    training = sum(1 for fs in state.frames.values()
+                                   if fs.status == "training")
+                    done = sum(1 for fs in state.frames.values()
+                               if fs.status == "done")
+                    print(f"  [scan #{_cycle}] {scanned} dirs | "
+                          f"ready={ready} training={training} done={done}")
+
+                # Cleanup snapshots for frames no longer in raw_images
+                active_keys = set()
+                for fd in raw_dir.iterdir():
+                    if fd.is_dir():
+                        try:
+                            sd, fid = parse_frame_dirname(fd.name)
+                            active_keys.add(f"{sd}-{fid}")
+                        except ValueError:
+                            pass
+                for k in list(_prev_snapshot):
+                    if k not in active_keys:
+                        del _prev_snapshot[k]
 
             # ── 2. Dispatch ready frames (round-robin to least-loaded worker) ──
             ready_frames = [(k, fs) for k, fs in state.frames.items()
@@ -448,6 +524,7 @@ def main_loop(state: TrainState, cfg: dict,
 
                     # Start training
                     state.update_frame(key, status="training")
+                    print(f"  [dispatch] {key} → {best_worker.id}")
                     litegs_path = Path(best_worker.litegs_path)
                     py = str(litegs_path / ".venv" / "Scripts" / "python.exe")
                     status_rel = f"results/{fs.sub_dir}/_worker_status.json"
