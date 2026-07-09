@@ -592,48 +592,43 @@ def run_render(state: FuseState, cfg: dict,
         broadcaster.broadcast("log", line)
         logger.write("render", line)
 
-    try:
-        _log(f"render PLY: {ply_path.name}")
-        _log(f"render JSON: {json_path.name}")
-
-        pw, browser, page = asyncio.run(ensure_browser(SUPERSPLAT_URL))
-
+    async def _do_render():
+        """All Playwright ops in ONE event loop — page references survive."""
+        pw, browser, page = await ensure_browser(SUPERSPLAT_URL)
         try:
-            # Upload PLY
-            asyncio.run(upload_ply(page, ply_path))
-
-            # Upload JSON → gets total_frames
-            total_frames = asyncio.run(upload_json_file(page, json_path))
+            await upload_ply(page, ply_path)
+            total_frames = await upload_json_file(page, json_path)
             if total_frames == 0:
                 _log("ERROR: JSON 导入失败 (total_frames=0)")
                 return
 
-            # Render
             renders_dir = proj_dir / "renders"
             renders_dir.mkdir(parents=True, exist_ok=True)
             expected_filename = f"{proj_name}.mp4"
-            success = asyncio.run(
-                render_video(page, total_frames, renders_dir,
-                             expected_filename, fps)
-            )
+            success = await render_video(page, total_frames, renders_dir,
+                                         expected_filename, fps)
             if success:
                 _log(f"render 完成 → {renders_dir / expected_filename}")
             else:
                 _log("render 可能未完成，请检查 SuperSplat 页面")
-
         finally:
             try:
-                asyncio.run(page.close())
+                await page.close()
             except Exception:
                 pass
             try:
-                asyncio.run(browser.close())
+                await browser.close()
             except Exception:
                 pass
             try:
-                asyncio.run(pw.stop())
+                await pw.stop()
             except Exception:
                 pass
+
+    try:
+        _log(f"render PLY: {ply_path.name}")
+        _log(f"render JSON: {json_path.name}")
+        asyncio.run(_do_render())
 
     except Exception as e:
         _log(f"RENDER ERROR: {e}")
