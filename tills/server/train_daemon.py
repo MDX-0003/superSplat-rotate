@@ -391,6 +391,12 @@ def handle_action(state: TrainState, body: dict) -> dict:
             worker, proj_dir, frame.sub_dir, frame.frame_id,
             level=level, frame_dirname=frame.dirname,
         )
+        # Immediately reset state so the next scan re-detects this frame
+        if result.get("status") == "ok":
+            state.update_frame(key, status="new",
+                               worker_id="",
+                               iteration=0, total_iterations=0,
+                               error_message="", retry_count=0)
         return result
 
     return {"status": "error", "message": f"unknown action: {action}"}
@@ -472,12 +478,28 @@ def main_loop(state: TrainState, cfg: dict,
 
                     key = f"{sub_dir}-{frame_id}"
 
-                    # Skip if already tracking and training/done
+                    # Skip if already actively training
                     existing = state.get_frame(key)
-                    if existing and existing.status in ("training", "done"):
+                    if existing and existing.status == "training":
                         continue
 
-                    # Check if PLY already exists
+                    # For "done" frames: verify PLY still exists.
+                    # Cleanup may have deleted it → re-check needed.
+                    if existing and existing.status == "done":
+                        ply_path = proj_dir / f"{key}.ply"
+                        if ply_path.exists():
+                            continue  # PLY still there, truly done
+                        # PLY gone (cleanup) → reset to checking
+                        state.update_frame(key, status="checking",
+                                           worker_id="",
+                                           iteration=0, total_iterations=0)
+                        _prev_snapshot.pop(key, None)
+                        print(f"  [scan] RE-CHECK {key} — PLY deleted, "
+                              f"will re-detect")
+                        _emit_log("daemon",
+                                  f"重新检测 {key} (PLY 已被删除)")
+
+                    # Check if PLY already exists (from previous runs)
                     ply_path = proj_dir / f"{key}.ply"
                     if ply_path.exists() and not force:
                         state.add_frame(frame_id, sub_dir, fd.name)
