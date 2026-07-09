@@ -625,9 +625,19 @@ def main_loop(state: TrainState, cfg: dict,
             # ── 3. Monitor running processes ──
             done_keys = []
             for key, (worker, proc) in list(state.running_processes.items()):
+                # Read stdout FIRST (before poll), so we capture output
+                # even if the process exited between cycles.
+                try:
+                    for line in proc.stdout:
+                        line = line.rstrip("\n\r")
+                        if line:
+                            _emit_log(worker.id, line)
+                except Exception:
+                    pass
+
                 rc = proc.poll()
                 if rc is None:
-                    # Still running — read status file
+                    # Still running — read status file for progress
                     fs = state.get_frame(key)
                     if fs:
                         status_path = str(
@@ -642,16 +652,8 @@ def main_loop(state: TrainState, cfg: dict,
                                 total_iterations=status_data.get(
                                     "total_iterations", 0),
                             )
-                    # Stream stdout lines
-                    try:
-                        for line in proc.stdout:
-                            line = line.rstrip("\n\r")
-                            if line:
-                                _emit_log(worker.id, line)
-                    except Exception:
-                        pass
                 else:
-                    # Process exited — drain remaining stdout first
+                    # Process exited — drain any remaining stdout
                     done_keys.append(key)
                     try:
                         remaining = proc.stdout.read()
@@ -674,6 +676,7 @@ def main_loop(state: TrainState, cfg: dict,
                                           "results" / fs.sub_dir)
                         remote_ply = worker_results / ply_name
                         local_ply = proj_dir / ply_name
+                        collected = False
 
                         if worker.is_host:
                             if remote_ply.exists():
@@ -681,6 +684,11 @@ def main_loop(state: TrainState, cfg: dict,
                                 size_mb = local_ply.stat().st_size / 1024 ** 2
                                 _emit_log("daemon",
                                           f"回收 {key} ({size_mb:.1f} MB)")
+                                collected = True
+                            else:
+                                _emit_log("daemon",
+                                          f"回收失败 {key}: PLY 不存在 "
+                                          f"({remote_ply})")
                         else:
                             from tills._distributed import scp_recv_multi
                             remote_str = str(remote_ply).replace("\\", "/")
@@ -689,10 +697,30 @@ def main_loop(state: TrainState, cfg: dict,
                                 size_mb = local_ply.stat().st_size / 1024 ** 2
                                 _emit_log("daemon",
                                           f"回收 {key} ({size_mb:.1f} MB)")
+                                collected = True
                             else:
-                                _emit_log("daemon", f"回收失败 {key}")
+                                _emit_log("daemon",
+                                          f"回收失败 {key}: SCP ok={ok} "
+                                          f"local_exists={local_ply.exists()}")
 
-                        state.update_frame(key, status="done")
+                        if collected:
+                            state.update_frame(key, status="done")
+                        else:
+                            # PLY not collected — retry if possible
+                            if fs.retry_count < 1:
+                                state.update_frame(
+                                    key, status="ready",
+                                    retry_count=fs.retry_count + 1,
+                                    worker_id="",
+                                    error_message="PLY collection failed")
+                                _emit_log("daemon",
+                                          f"回收失败 {key}, 重试中...")
+                            else:
+                                state.update_frame(
+                                    key, status="failed",
+                                    error_message="PLY collection failed after retries")
+                                _emit_log("daemon",
+                                          f"回收最终失败 {key}")
                     else:
                         # Retry once
                         if fs.retry_count < 1:
