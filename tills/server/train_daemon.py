@@ -498,13 +498,13 @@ def main_loop(state: TrainState, cfg: dict,
                     if existing and existing.status == "training":
                         continue
 
-                    # For "done" frames: verify PLY still exists.
-                    # Cleanup may have deleted it → re-check needed.
-                    if existing and existing.status == "done":
+                    # For "done" or "failed" frames: verify PLY still exists.
+                    # Cleanup/stop may have deleted it → re-check needed.
+                    if existing and existing.status in ("done", "failed"):
                         ply_path = proj_dir / f"{key}.ply"
                         if ply_path.exists():
-                            continue  # PLY still there, truly done
-                        # PLY gone (cleanup) → reset to checking
+                            continue  # PLY still there, truly done (not re-trainable)
+                        # PLY gone → reset to checking
                         state.update_frame(key, status="checking",
                                            worker_id="",
                                            iteration=0, total_iterations=0)
