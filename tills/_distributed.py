@@ -652,6 +652,63 @@ def scp_recv(worker: WorkerNode, remote_path: str, local_path: Path) -> bool:
         return False
 
 
+# ── batch SCP (multi-file in single handshake) ────────────────────────────────────
+
+def scp_send_multi(worker: WorkerNode, local_paths: list[str],
+                   remote_dst: str) -> bool:
+    """Send multiple files/dirs to a worker in a single SCP call.
+
+    One SSH handshake instead of N, avoiding per-file connection overhead.
+    ``remote_dst`` must already exist on the worker.
+    """
+    import subprocess as _sp
+
+    remote_target = f"{worker.ssh_target}:{remote_dst}"
+    scp_args = ["scp", "-r"]
+    if worker.ssh_key_path:
+        scp_args.extend(["-i", worker.ssh_key_path])
+    if worker.ssh_port != 22:
+        scp_args.extend(["-P", str(worker.ssh_port)])
+    scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
+    scp_args.extend(["-o", "ConnectTimeout=10"])
+    scp_args.extend(local_paths)
+    scp_args.append(remote_target)
+
+    try:
+        result = _sp.run(scp_args, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=600)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def scp_recv_multi(worker: WorkerNode, remote_paths: list[str],
+                   local_dst: Path) -> bool:
+    """Pull multiple files from a worker in a single SCP call.
+
+    The reverse of ``scp_send_multi`` — one handshake for N files.
+    """
+    import subprocess as _sp
+
+    remote_src = f"{worker.ssh_target}:"
+    scp_args = ["scp", "-r"]
+    if worker.ssh_key_path:
+        scp_args.extend(["-i", worker.ssh_key_path])
+    if worker.ssh_port != 22:
+        scp_args.extend(["-P", str(worker.ssh_port)])
+    scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
+    scp_args.extend(["-o", "ConnectTimeout=10"])
+    scp_args.extend([f"{remote_src}{rp}" for rp in remote_paths])
+    scp_args.append(str(local_dst))
+
+    try:
+        result = _sp.run(scp_args, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=600)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 # ── worker status file ─────────────────────────────────────────────────────────
 
 def read_worker_status(worker: WorkerNode, status_path: str,
