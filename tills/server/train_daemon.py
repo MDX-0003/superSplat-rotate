@@ -60,17 +60,20 @@ class DaemonLogger:
         self._log_dir = proj_dir / "logs" / f"daemon-{ts}"
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._handles: dict[str, object] = {}  # name → file handle
+        self._write_lock = threading.Lock()
         print(f"  logs → {self._log_dir}")
 
     def _write(self, name: str, line: str):
-        """Append a line to a named log file."""
-        if name not in self._handles:
-            path = self._log_dir / f"{name}.log"
-            self._handles[name] = open(path, "a", encoding="utf-8", buffering=1)
-        f = self._handles[name]
-        ts = time.strftime("%H:%M:%S")
-        f.write(f"[{ts}] {line}\n")
-        f.flush()
+        """Append a line to a named log file (thread-safe)."""
+        with self._write_lock:
+            if name not in self._handles:
+                path = self._log_dir / f"{name}.log"
+                self._handles[name] = open(path, "a", encoding="utf-8",
+                                           buffering=1)
+            f = self._handles[name]
+            ts = time.strftime("%H:%M:%S")
+            f.write(f"[{ts}] {line}\n")
+            f.flush()
 
     def daemon(self, msg: str):
         """Log a daemon-level event."""
@@ -655,24 +658,34 @@ def main_loop(state: TrainState, cfg: dict,
                         state.running_processes[key] = (best_worker, proc)
                         _emit_log("daemon",
                                   f"启动训练 {key} → {best_worker.id}")
+
+                        # Spawn a daemon thread to stream stdout WITHOUT
+                        # blocking the main loop.  Each process gets its
+                        # own reader so all workers' output arrives in
+                        # real time, regardless of which finishes first.
+                        _wid = best_worker.id
+                        def _reader(proc_obj, wid):
+                            try:
+                                for line in proc_obj.stdout:
+                                    line = line.rstrip("\n\r")
+                                    if line:
+                                        _emit_log(wid, line)
+                            except Exception:
+                                pass
+                        t = threading.Thread(target=_reader,
+                                             args=(proc, _wid),
+                                             daemon=True)
+                        t.start()
                     except Exception as e:
                         state.update_frame(key, status="failed",
                                            error_message=f"ssh_run_async: {e}")
                         _emit_log("daemon", f"启动失败 {key}: {e}")
 
             # ── 3. Monitor running processes ──
+            #    Stdout is read by per-process daemon threads — this loop
+            #    only checks exit status and reads progress files.
             done_keys = []
             for key, (worker, proc) in list(state.running_processes.items()):
-                # Read stdout FIRST (before poll), so we capture output
-                # even if the process exited between cycles.
-                try:
-                    for line in proc.stdout:
-                        line = line.rstrip("\n\r")
-                        if line:
-                            _emit_log(worker.id, line)
-                except Exception:
-                    pass
-
                 rc = proc.poll()
                 if rc is None:
                     # Still running — read status file for progress
@@ -691,17 +704,8 @@ def main_loop(state: TrainState, cfg: dict,
                                     "total_iterations", 0),
                             )
                 else:
-                    # Process exited — drain any remaining stdout
+                    # Process exited
                     done_keys.append(key)
-                    try:
-                        remaining = proc.stdout.read()
-                        if remaining:
-                            for line in remaining.splitlines():
-                                line = line.strip()
-                                if line:
-                                    _emit_log(worker.id, line)
-                    except Exception:
-                        pass
 
                     fs = state.get_frame(key)
                     if fs is None:
