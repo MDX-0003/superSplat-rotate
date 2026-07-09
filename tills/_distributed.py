@@ -263,6 +263,59 @@ def check_frame_ready(frame_dir: Path,
     return True
 
 
+# ── process control ──────────────────────────────────────────────────────────────
+
+def kill_worker_process(worker: WorkerNode, status_path: str,
+                        timeout: int = 15) -> tuple:
+    """Kill a training process on a worker by reading its PID from status JSON.
+
+    Args:
+        worker: Target WorkerNode.
+        status_path: Path to the worker's status JSON file
+                     (e.g. ``results/0703/_worker_status.json``).
+        timeout: SSH timeout in seconds.
+
+    Returns:
+        ``(success, message)`` — success=True if the process was killed
+        or was already gone. success=False only on unexpected errors.
+    """
+    import signal as _signal
+
+    # 1. Read PID from status file
+    status_data = read_worker_status(worker, status_path, timeout=timeout)
+    if status_data is None:
+        return True, "no status file (process may have already finished)"
+
+    pid = status_data.get("pid")
+    if pid is None:
+        return True, "no PID in status (nothing to kill)"
+
+    # 2. Kill by PID
+    if worker.is_host:
+        try:
+            os.kill(int(pid), _signal.SIGTERM)
+            return True, f"killed local PID {pid}"
+        except ProcessLookupError:
+            return True, f"local PID {pid} already gone"
+        except PermissionError as e:
+            return False, f"permission denied killing PID {pid}: {e}"
+        except OSError as e:
+            # Windows: os.kill on invalid PID may raise OSError
+            return True, f"local PID {pid} not found (OSError: {e})"
+        except Exception as e:
+            return False, f"unexpected error killing PID {pid}: {e}"
+    else:
+        # Remote: ``taskkill /f /pid`` via SSH.
+        # ``2>nul & exit 0`` ensures we never get non-zero exit code
+        # when the process is already gone.
+        cmd = f'taskkill /f /pid {pid} 2>nul & exit 0'
+        try:
+            result = ssh_run(worker, cmd, timeout=timeout)
+            return True, f"remote kill PID {pid}: {result.stdout.strip() or 'done'}"
+        except Exception as e:
+            return False, f"SSH kill failed: {e}"
+
+
 # ── SSH / remote execution ─────────────────────────────────────────────────────
 
 def _build_ssh_cmd(worker: WorkerNode, remote_command: str) -> list[str]:
