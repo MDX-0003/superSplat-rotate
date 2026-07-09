@@ -62,8 +62,13 @@ class FuseState:
         clip_dir = proj_dir.parent / f"{proj_dir.name}-clip"
 
         # ── fuse PLYs: <proj>/*.ply, exclude "combine" ──
+        #    Index (1-based) is the position in the FULL sorted glob
+        #    (matching v6 behaviour).  fuse_ply.py uses these indices
+        #    both for file lookup and combine filename generation.
+        all_plys = sorted(proj_dir.glob("*.ply"))
+        full_idx = {p.name: i + 1 for i, p in enumerate(all_plys)}
         fuse_result = []
-        for p in sorted(proj_dir.glob("*.ply")):
+        for p in all_plys:
             if "combine" in p.name.lower():
                 continue
             mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%m-%d %H:%M")
@@ -71,6 +76,7 @@ class FuseState:
             fuse_result.append({
                 "name": p.name, "size_mb": size_mb,
                 "mtime": mtime, "path": str(p),
+                "idx": full_idx[p.name],  # 1-based global index
             })
 
         # ── render PLYs: <proj>-clip/*.ply ──
@@ -181,11 +187,13 @@ def build_fuse_page(state: FuseState) -> str:
     # ── fuse column (ordered multi-select) ──
     fuse_rows = ""
     for i, p in enumerate(fuse_plys):
+        gidx = p.get("idx", i + 1)  # 1-based global index
         fuse_rows += f"""
         <tr class="row" data-col="fuse" data-idx="{i}"
-            data-name="{p['name']}"
+            data-gidx="{gidx}" data-name="{p['name']}"
             onclick="toggleFuseRow(this)" id="fuserow-{i}">
           <td style="width:20px"><span class="sel-mark" id="selmark-{i}"></span></td>
+          <td style="width:30px;color:#7a7368;font-size:12px">[{gidx}]</td>
           <td>{p['name']}</td>
           <td>{p['size_mb']} MB</td>
           <td>{p['mtime']}</td>
@@ -305,7 +313,7 @@ def build_fuse_page(state: FuseState) -> str:
     }});
 
     // ── ordered fuse selection ──
-    let fuseOrder = [];  // array of {{idx, name}} in click order
+    let fuseOrder = [];  // array of {{idx, gidx, name}} in click order
 
     function updateFuseUI() {{
       // Clear all highlights / badges
@@ -336,33 +344,23 @@ def build_fuse_page(state: FuseState) -> str:
         bar.style.display = 'none';
       }} else {{
         bar.style.display = 'flex';
-        let names = fuseOrder.map(f => f.name.replace('.ply','').split('-').pop());
-        orderEl.textContent = names.join(' → ');
-        // Build expected combine name: extract frame_ids, deduplicate sub_dir
-        let sub = '';
-        let ids = [];
-        for (let f of fuseOrder) {{
-          let parts = f.name.replace('.ply','').split('-');
-          if (parts.length >= 2) {{
-            if (!sub) sub = parts[0];
-            ids.push(parts[parts.length - 1]);
-          }} else {{
-            ids.push(f.name.replace('.ply',''));
-          }}
-        }}
-        pathEl.textContent = 'combine-' + ids.join('-') + '.ply';
+        let gidxs = fuseOrder.map(f => '[' + f.gidx + ']');
+        orderEl.textContent = gidxs.join(' → ');
+        // combine name uses global indices (matching fuse_ply.py output)
+        let idxs = fuseOrder.map(f => f.gidx);
+        pathEl.textContent = 'combine-' + idxs.join('-') + '.ply';
       }}
     }}
 
     function toggleFuseRow(tr) {{
       let idx = parseInt(tr.dataset.idx);
+      let gidx = parseInt(tr.dataset.gidx);
       let name = tr.dataset.name;
-      // Check if already selected
       let pos = fuseOrder.findIndex(f => f.idx === idx);
       if (pos >= 0) {{
         fuseOrder.splice(pos, 1);
       }} else {{
-        fuseOrder.push({{idx: idx, name: name}});
+        fuseOrder.push({{idx: idx, gidx: gidx, name: name}});
       }}
       updateFuseUI();
     }}
