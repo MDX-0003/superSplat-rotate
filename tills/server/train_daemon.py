@@ -253,7 +253,23 @@ _JS_SSE = """
     let body = JSON.stringify({key: key, action: action, level: level || 'soft'});
     fetch('/action', {method:'POST',
      headers:{'Content-Type':'application/json'}, body:body})
-      .then(r => r.json()).then(d => alert(JSON.stringify(d)));
+      .then(r => r.json()).then(d => {
+        if (d.status === 'ok') {
+          if (d.deleted) {
+            // cleanup response
+            let msg = action + ' [' + (d.level||'') + '] OK — '
+                    + 'deleted: ' + d.deleted.length
+                    + ', skipped: ' + (d.skipped ? d.skipped.length : 0);
+            alert(msg);
+          } else {
+            // stop response
+            alert(action + ' OK: ' + (d.message || 'done'));
+          }
+        } else {
+          alert(action + ' FAILED: ' + (d.message || JSON.stringify(d)));
+        }
+        location.reload();
+      });
   }
 </script>
 """
