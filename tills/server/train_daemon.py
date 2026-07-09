@@ -601,6 +601,9 @@ def main_loop(state: TrainState, cfg: dict,
                         f'--frames {fs.dirname} '
                         f'--worker-status {status_rel}'
                     )
+                    # On retry, force batch_run.py to ignore stale results
+                    if fs.retry_count > 0:
+                        cmd += " --force"
                     if extra_str:
                         cmd += f" {extra_str}"
 
