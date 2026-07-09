@@ -179,6 +179,90 @@ def _get_local_ip() -> str:
         return "127.0.0.1"
 
 
+# ── frame readiness detection ────────────────────────────────────────────────────
+
+def check_frame_ready(frame_dir: Path,
+                      expected_count: int | None = None,
+                      stable_window: float = 5.0) -> bool:
+    """Check if a frame directory is fully copied and stable.
+
+    Takes two snapshots separated by ``stable_window`` seconds.
+    Returns True only when all of:
+      1. File count is stable across both snapshots
+      2. File list (names) is unchanged
+      3. Each file's size is unchanged
+      4. File count matches ``expected_count`` (if provided)
+         OR the numeric prefix of the directory name (e.g. ``"120-..."`` → 120)
+
+    Args:
+        frame_dir: Path to the frame subdirectory.
+        expected_count: Explicit expected image count (from pipeline.json).
+                        If None, parsed from directory name prefix.
+        stable_window: Seconds to wait between samples.
+
+    Returns:
+        True if the directory appears fully copied and stable.
+    """
+    import time as _time
+
+    def _snapshot(d: Path) -> tuple[int, set[str], dict[str, int]]:
+        """Return (count, set_of_names, {name: size})."""
+        files = list(d.iterdir())
+        return (
+            len(files),
+            {f.name for f in files},
+            {f.name: f.stat().st_size for f in files},
+        )
+
+    if not frame_dir.is_dir():
+        return False
+
+    # Determine expected count
+    expected = None
+    if expected_count is not None:
+        expected = expected_count
+    else:
+        # Parse numeric prefix from dirname: "120-2026-..." → 120
+        name = frame_dir.name
+        try:
+            prefix = name.split("-")[0]
+            expected = int(prefix)
+        except (ValueError, IndexError):
+            expected = None  # can't determine → skip count check
+
+    # First sample
+    count1, names1, sizes1 = _snapshot(frame_dir)
+
+    # Can't be ready if no files
+    if count1 == 0:
+        return False
+
+    # Count mismatch on first sample → not ready
+    if expected is not None and count1 != expected:
+        return False
+
+    # Wait for stability window
+    if stable_window > 0:
+        _time.sleep(stable_window)
+
+    # Second sample
+    count2, names2, sizes2 = _snapshot(frame_dir)
+
+    # All three stability checks
+    if count1 != count2:
+        return False
+    if names1 != names2:
+        return False
+    if sizes1 != sizes2:
+        return False
+
+    # Final count validation (second sample also must match)
+    if expected is not None and count2 != expected:
+        return False
+
+    return True
+
+
 # ── SSH / remote execution ─────────────────────────────────────────────────────
 
 def _build_ssh_cmd(worker: WorkerNode, remote_command: str) -> list[str]:
