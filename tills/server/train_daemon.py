@@ -514,16 +514,21 @@ def main_loop(state: TrainState, cfg: dict,
                             print(f"  [scan] {key} — {cur[0]}/{expected} files, "
                                   f"not yet stable (waiting next cycle)")
 
-                # Heartbeat: print scan summary every 6 cycles (~30s)
-                if _cycle % 6 == 0 and scanned > 0:
+                # Heartbeat: print + log scan summary every cycle when frames exist
+                if scanned > 0:
                     ready = sum(1 for fs in state.frames.values()
                                 if fs.status == "ready")
                     training = sum(1 for fs in state.frames.values()
                                    if fs.status == "training")
                     done = sum(1 for fs in state.frames.values()
                                if fs.status == "done")
-                    print(f"  [scan #{_cycle}] {scanned} dirs | "
-                          f"ready={ready} training={training} done={done}")
+                    failed = sum(1 for fs in state.frames.values()
+                                 if fs.status == "failed")
+                    msg = (f"scan #{_cycle}: {scanned} dirs | "
+                           f"ready={ready} training={training} "
+                           f"done={done} failed={failed}")
+                    print(f"  [{msg}]")
+                    _emit_log("daemon", msg)
 
                 # Cleanup snapshots for frames no longer in raw_images
                 active_keys = set()
