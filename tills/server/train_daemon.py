@@ -116,6 +116,7 @@ class TrainState:
         self.frames: dict[str, FrameState] = {}     # "SUBDIR-FRAMEID" → FrameState
         self.workers: list[WorkerNode] = []
         self.running_processes: dict[str, tuple] = {}  # "KEY" → (WorkerNode, Popen)
+        self.raw_images_dir: Path | None = None
         self._lock = threading.Lock()
 
     def add_frame(self, frame_id: str, sub_dir: str, dirname: str = ""):
@@ -405,6 +406,7 @@ def handle_action(state: TrainState, body: dict) -> dict:
         result = cleanup_frame(
             worker, proj_dir, frame.sub_dir, frame.frame_id,
             level=level, frame_dirname=frame.dirname,
+            raw_images_dir=state.raw_images_dir,
         )
         # Immediately reset state so the next scan re-detects this frame
         if result.get("status") == "ok":
@@ -498,13 +500,16 @@ def main_loop(state: TrainState, cfg: dict,
                     if existing and existing.status == "training":
                         continue
 
-                    # For "done" or "failed" frames: verify PLY still exists.
-                    # Cleanup/stop may have deleted it → re-check needed.
-                    if existing and existing.status in ("done", "failed"):
+                    # For "done" frames: verify PLY still exists.
+                    # User may have cleaned it up via Web UI → re-check needed.
+                    # "failed" frames are NOT auto-rechecked — training
+                    # failed without producing a PLY; user must explicitly
+                    # "清理" to reset.
+                    if existing and existing.status == "done":
                         ply_path = proj_dir / f"{key}.ply"
                         if ply_path.exists():
-                            continue  # PLY still there, truly done (not re-trainable)
-                        # PLY gone → reset to checking
+                            continue  # PLY still there, truly done
+                        # PLY gone (cleanup) → reset to checking
                         state.update_frame(key, status="checking",
                                            worker_id="",
                                            iteration=0, total_iterations=0)
@@ -907,6 +912,8 @@ def main():
     poll_interval = cfg.get("poll_interval", 5)
     state = TrainState(project=cfg["project"], poll_interval=poll_interval)
     state.workers = workers
+    state.raw_images_dir = Path(cfg.get("raw_images_path",
+                                        proj_dir / "raw_images"))
 
     # Init broadcaster
     broadcaster = SSEBroadcaster()

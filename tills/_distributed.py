@@ -321,6 +321,7 @@ def cleanup_frame(worker: WorkerNode, proj_dir: Path,
                   sub_dir: str, frame_id: str,
                   level: str = "soft",
                   frame_dirname: str | None = None,
+                  raw_images_dir: Path | None = None,
                   dry_run: bool = False) -> dict:
     """Delete training artifacts for a specific frame across all workers.
 
@@ -334,6 +335,8 @@ def cleanup_frame(worker: WorkerNode, proj_dir: Path,
         level: ``"soft"`` (keep raw_images) or ``"hard"`` (delete raw_images too).
         frame_dirname: Full raw_images subdirectory name
                        (e.g. ``"120-2026-06-30-120849"``). Required for hard level.
+        raw_images_dir: Actual raw_images directory (from pipeline.json).
+                        Defaults to ``proj_dir / "raw_images"``.
         dry_run: If True, only compute deletion list without actually deleting.
 
     Returns:
@@ -405,10 +408,11 @@ def cleanup_frame(worker: WorkerNode, proj_dir: Path,
             else:
                 deleted.append(f"[{worker.id}] {worker_data} (dry_run)")
 
-    # 4. Supersplat raw_images/<frame_dirname>/ (hard only)
+    # 4. raw_images/<frame_dirname>/ (hard only)
     if level == "hard":
         if frame_dirname:
-            raw_dir = proj_dir / "raw_images" / frame_dirname
+            base = raw_images_dir if raw_images_dir else (proj_dir / "raw_images")
+            raw_dir = base / frame_dirname
             result = _rm(raw_dir)
             if "error" in result:
                 skipped.append(f"raw_images({result})")
