@@ -643,8 +643,18 @@ def main_loop(state: TrainState, cfg: dict,
                     except Exception:
                         pass
                 else:
-                    # Process exited
+                    # Process exited — drain remaining stdout first
                     done_keys.append(key)
+                    try:
+                        remaining = proc.stdout.read()
+                        if remaining:
+                            for line in remaining.splitlines():
+                                line = line.strip()
+                                if line:
+                                    _emit_log(worker.id, line)
+                    except Exception:
+                        pass
+
                     fs = state.get_frame(key)
                     if fs is None:
                         continue
