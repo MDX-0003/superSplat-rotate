@@ -313,8 +313,9 @@ def build_fuse_page(state: FuseState) -> str:
     &nbsp;|&nbsp; Fuse PLY: {len(fuse_plys)} 个
     &nbsp;|&nbsp; Render PLY: {len(render_plys)} 个
     &nbsp;|&nbsp; JSON: {len(json_files)} 个
-    &nbsp;|&nbsp; <a href="javascript:openPresets()"
-         style="color:#5b7c5a;font-weight:600;text-decoration:none">[点击编辑Presets]</a>
+    &nbsp;|&nbsp; <a href="/presets"
+         style="color:#5b7c5a;font-weight:600;text-decoration:none"
+         target="_blank">[Presets]</a>
   </div>
 
   <div class="grid">
