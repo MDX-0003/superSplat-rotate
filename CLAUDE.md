@@ -100,6 +100,12 @@ CameraData/<project>/
 - 中间产物存在则跳过，`--force` 强制覆盖
 - 断开重跑不加 `--steps` 即可从断开处继续（全幂等）
 
+### v8 Daemon（`tills/server/`）
+- `_server.py`：共享的 SSE/HTTP 微框架，两个 daemon 共同 import。**修改 `_server.py` 前确认 train + fuse 两个进程的行为都不会被影响。**
+- `Cache-Control: no-cache` 已全局开启。由于页面是服务端渲染（f-string 拼 HTML），不加此 header 浏览器会缓存旧版本 HTML/JS，revert 代码后页面仍用缓存 → 看起来"没修好"。
+- **修改 JS 必须一次只改一个区域**（modal / /presets 页 / 主页面逻辑），不要同时改多处。JS 语法错误或运行时异常会导致整个 `<script>` 块停止执行 → 所有事件处理器失效 → 页面"全部无法点击"。
+- 改 JS 后先验证 brace 平衡：`python -c "from tills.server.fuse_server import build_fuse_page; page = build_fuse_page(...); 统计 { 和 } 数量"`。
+
 ## 文档索引
 
 | 文档 | 内容 |
@@ -109,4 +115,4 @@ CameraData/<project>/
 | `Docs/HANDOFF_2026-06-05.md` | 早期交接文档 |
 | `PIPELINE.md` | 旧 v1 管线说明 |
 
-*最后更新: 2026-06-27*
+*最后更新: 2026-07-10*
