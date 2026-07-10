@@ -1,6 +1,5 @@
 {
-    "_doc": "Named parameter presets for ply_pipeline.py.  Each preset holds interpolate + fuse + clip params for one project folder.",
-    "_usage": "python tills_ply/ply_pipeline.py --preset <name> [--step interpolate|fuse|clip]",
+    "_doc": "Named parameter presets for ply_pipeline.py.",
     "presets": {
         "01-0625测试-3人": {
             "path": "CameraData/01",
@@ -19,7 +18,9 @@
                 "bias_margin": 0.35,
                 "bias_radius_percentile": 15,
                 "indices": [
-                    1,2,3
+                    1,
+                    2,
+                    3
                 ],
                 "output_subfix": ""
             },
@@ -57,7 +58,9 @@
                 "bias_margin": 0.35,
                 "bias_radius_percentile": 15,
                 "indices": [
-                    1,2,3
+                    1,
+                    2,
+                    3
                 ],
                 "output_subfix": ""
             },
@@ -68,9 +71,9 @@
                 "denoise_grid_cell": 0.15,
                 "denoise_min_points": 30,
                 "denoise_voxel_size": 0.2,
-                "height_up": 3.0,
+                "height_up": 3,
                 "height_down": 0.5,
-                "radius_scale": 1.0,
+                "radius_scale": 1,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,
                 "ring_inner_delta": 0.3,
@@ -92,10 +95,12 @@
                 "height_up": 3,
                 "height_down": 0.5,
                 "bias": true,
-                "bias_margin": 0.2,
+                "bias_margin": 0.3,
                 "bias_radius_percentile": 15,
                 "indices": [
-                    1,2,3
+                    1,
+                    2,
+                    3
                 ],
                 "output_subfix": ""
             },
@@ -106,9 +111,9 @@
                 "denoise_grid_cell": 0.15,
                 "denoise_min_points": 20,
                 "denoise_voxel_size": 0.2,
-                "height_up": 3.0,
+                "height_up": 3,
                 "height_down": 0.5,
-                "radius_scale": 1.0,
+                "radius_scale": 1,
                 "ring_delete": true,
                 "ring_outer_delta": 0.2,
                 "ring_inner_delta": 0.3,

@@ -205,23 +205,22 @@ _CSS = """
                   background:rgba(0,0,0,.45);z-index:1000;
                   justify-content:center;align-items:flex-start;padding-top:40px}
   .modal-overlay.open{display:flex}
-  .modal-card{background:#f5f0e8;border-radius:8px;padding:20px 24px;
-               max-width:650px;width:95%;max-height:85vh;overflow-y:auto;
+  .modal-card{background:#f5f0e8;border-radius:8px;padding:24px 28px;
+               max-width:720px;width:95%;max-height:85vh;overflow-y:auto;
                box-shadow:0 4px 20px rgba(0,0,0,.3)}
-  .modal-card h2{font-size:16px;color:#5b7c5a;margin-bottom:10px}
+  .modal-card h2{font-size:20px;color:#5b7c5a;margin-bottom:12px}
   .modal-card .close{float:right;background:none;border:none;font-size:20px;
                       cursor:pointer;color:#7a7368;padding:0 4px}
-  .modal-card .ms{{background:#fffdf7;border:1px solid #d9cfb8;
-                   border-radius:4px;padding:10px 14px;margin-bottom:10px}}
-  .modal-card .ms h3{{color:#5b7c5a;font-size:13px;margin-bottom:6px;
-                      padding-bottom:3px;border-bottom:1px solid #d9cfb8}}
-  .modal-card .fd{{display:flex;align-items:center;gap:6px;margin-bottom:5px;
-                   flex-wrap:wrap}}
-  .modal-card .fd label{{font-size:12px;color:#5b5a4e;min-width:155px}}
-  .modal-card .fd input[type="number"]{{width:80px}}
-  .modal-card .fd input[type="text"]{{width:130px}}
-  .modal-card .fd select{{padding:2px 4px;border:1px solid #d9cfb8;
-                           border-radius:3px;font-size:12px;background:#fffdf7}}
+  .modal-card .ms{background:#fffdf7;border:1px solid #d9cfb8;
+                   border-radius:4px;padding:14px 18px;margin-bottom:14px}
+  .modal-card .ms h3{color:#5b7c5a;font-size:16px;margin-bottom:8px;
+                      padding-bottom:4px;border-bottom:1px solid #d9cfb8}
+  .modal-card .fd{display:flex;align-items:center;gap:10px;margin-bottom:8px;
+                   flex-wrap:wrap;line-height:1.6}
+  .modal-card .fd label{font-size:15px;color:#5b5a4e;flex:0 0 215px;text-align:right}
+  .modal-card .fd input[type="text"]{font-size:14px;padding:3px 5px}
+  .modal-card .fd select{padding:3px 5px;border:1px solid #d9cfb8;
+                           border-radius:3px;font-size:14px;background:#fffdf7}
 </style>
 """
 
@@ -315,7 +314,7 @@ def build_fuse_page(state: FuseState) -> str:
     &nbsp;|&nbsp; Render PLY: {len(render_plys)} 个
     &nbsp;|&nbsp; JSON: {len(json_files)} 个
     &nbsp;|&nbsp; <a href="javascript:openPresets()"
-         style="color:#5b7c5a;font-weight:600;text-decoration:none">[Presets]</a>
+         style="color:#5b7c5a;font-weight:600;text-decoration:none">[点击编辑Presets]</a>
   </div>
 
   <div class="grid">
@@ -513,12 +512,13 @@ def build_fuse_page(state: FuseState) -> str:
     async function pmLoad() {{
       pmName = document.getElementById('pm-select').value;
       let editor = document.getElementById('pm-editor');
-      if (!pmName) {{ editor.style.display = 'none'; return; }}
+      if (!pmName) {{ editor.style.display = 'none'; document.getElementById('pm-actions').style.display = 'none'; return; }}
       let r = await fetch('/presets/data');
       let all = await r.json();
       let p = all.presets[pmName];
       if (!p) return;
       editor.style.display = 'block';
+      document.getElementById('pm-actions').style.display = 'flex';
       pmSet('pm-f-max_index', p.max_index);
       pmSet('pm-f-radius_scale', p.fuse?.radius_scale);
       pmSet('pm-f-height_up', p.fuse?.height_up);
@@ -614,49 +614,49 @@ def build_fuse_page(state: FuseState) -> str:
     <div class="modal-card">
       <button class="close" onclick="closePresets()">&times;</button>
       <h2>Preset 编辑器</h2>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
         <select id="pm-select" onchange="pmLoad()"
-                style="padding:4px 8px;border:1px solid #d9cfb8;border-radius:3px;
-                       font-size:13px;background:#fffdf7">
+                style="padding:5px 8px;border:1px solid #d9cfb8;border-radius:3px;
+                       font-size:15px;background:#fffdf7">
           <option value="">— 选择 Preset —</option>
         </select>
-        <button onclick="pmCreate()" style="font-size:12px;padding:4px 10px">+ 新建</button>
+        <button onclick="pmCreate()" style="font-size:14px;padding:5px 12px">+ 新建</button>
+        <span id="pm-actions" style="display:none;gap:6px">
+          <button onclick="pmSave()" style="font-size:14px;padding:5px 12px">保存</button>
+          <button onclick="pmDelete()" style="font-size:14px;padding:5px 12px;background:#c0392b;color:#fff;border:none;border-radius:3px;cursor:pointer">删除</button>
+        </span>
       </div>
       <div id="pm-editor" style="display:none">
         <div class="ms"><h3>fuse 参数</h3>
-          <div class="fd"><label>max_index</label><input type="number" id="pm-f-max_index" step="1"></div>
-          <div class="fd"><label>radius_scale</label><input type="number" id="pm-f-radius_scale" step="0.01"></div>
-          <div class="fd"><label>height_up (m)</label><input type="number" id="pm-f-height_up" step="0.1"></div>
-          <div class="fd"><label>height_down (m)</label><input type="number" id="pm-f-height_down" step="0.1"></div>
+          <div class="fd"><label>max_index</label><input type="text" id="pm-f-max_index" step="1" size="4"></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-f-radius_scale" step="0.01" size="5"></div>
+          <div class="fd"><label>height_up (m)</label><input type="text" id="pm-f-height_up" step="0.1" size="4"></div>
+          <div class="fd"><label>height_down (m)</label><input type="text" id="pm-f-height_down" step="0.1" size="4"></div>
           <div class="fd"><label>bias</label><input type="checkbox" id="pm-f-bias"
             onchange="let b=this.checked;document.getElementById('pm-f-bias_margin').disabled=!b;document.getElementById('pm-f-bias_radius_percentile').disabled=!b"></div>
-          <div class="fd"><label>bias_margin (m)</label><input type="number" id="pm-f-bias_margin" step="0.01"></div>
-          <div class="fd"><label>bias_radius_percentile</label><input type="number" id="pm-f-bias_radius_percentile" step="1"></div>
+          <div class="fd"><label>bias_margin (m)</label><input type="text" id="pm-f-bias_margin" step="0.01" size="5"></div>
+          <div class="fd"><label>bias_radius_percentile</label><input type="text" id="pm-f-bias_radius_percentile" step="1" size="4"></div>
         </div>
         <div class="ms"><h3>clip 参数</h3>
-          <div class="fd"><label>clip_percent</label><input type="number" id="pm-c-clip_percent" step="0.01"></div>
+          <div class="fd"><label>clip_percent</label><input type="text" id="pm-c-clip_percent" step="0.01" size="5"></div>
           <div class="fd"><label>denoise</label><input type="checkbox" id="pm-c-denoise"></div>
-          <div class="fd"><label>denoise_method</label><input type="text" id="pm-c-denoise_method" placeholder="region-grow"></div>
-          <div class="fd"><label>denoise_grid_cell (m)</label><input type="number" id="pm-c-denoise_grid_cell" step="0.01"></div>
-          <div class="fd"><label>denoise_min_points</label><input type="number" id="pm-c-denoise_min_points" step="1"></div>
-          <div class="fd"><label>denoise_voxel_size (m)</label><input type="number" id="pm-c-denoise_voxel_size" step="0.01"></div>
-          <div class="fd"><label>height_up (m)</label><input type="number" id="pm-c-height_up" step="0.1"></div>
-          <div class="fd"><label>height_down (m)</label><input type="number" id="pm-c-height_down" step="0.1"></div>
-          <div class="fd"><label>radius_scale</label><input type="number" id="pm-c-radius_scale" step="0.01"></div>
+          <div class="fd"><label>denoise_method</label><input type="text" id="pm-c-denoise_method" placeholder="region-grow" size="12"></div>
+          <div class="fd"><label>denoise_grid_cell (m)</label><input type="text" id="pm-c-denoise_grid_cell" step="0.01" size="5"></div>
+          <div class="fd"><label>denoise_min_points</label><input type="text" id="pm-c-denoise_min_points" step="1" size="4"></div>
+          <div class="fd"><label>denoise_voxel_size (m)</label><input type="text" id="pm-c-denoise_voxel_size" step="0.01" size="5"></div>
+          <div class="fd"><label>height_up (m)</label><input type="text" id="pm-c-height_up" step="0.1" size="4"></div>
+          <div class="fd"><label>height_down (m)</label><input type="text" id="pm-c-height_down" step="0.1" size="4"></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-c-radius_scale" step="0.01" size="5"></div>
           <div class="fd"><label>ring_delete</label><input type="checkbox" id="pm-c-ring_delete"></div>
-          <div class="fd"><label>ring_outer_delta (m)</label><input type="number" id="pm-c-ring_outer_delta" step="0.01"></div>
-          <div class="fd"><label>ring_inner_delta (m)</label><input type="number" id="pm-c-ring_inner_delta" step="0.01"></div>
-          <div class="fd"><label>ring_height_up (m)</label><input type="number" id="pm-c-ring_height_up" step="0.1"></div>
-          <div class="fd"><label>ring_height_down (m)</label><input type="number" id="pm-c-ring_height_down" step="0.1"></div>
+          <div class="fd"><label>ring_outer_delta (m)</label><input type="text" id="pm-c-ring_outer_delta" step="0.01" size="5"></div>
+          <div class="fd"><label>ring_inner_delta (m)</label><input type="text" id="pm-c-ring_inner_delta" step="0.01" size="5"></div>
+          <div class="fd"><label>ring_height_up (m)</label><input type="text" id="pm-c-ring_height_up" step="0.1" size="4"></div>
+          <div class="fd"><label>ring_height_down (m)</label><input type="text" id="pm-c-ring_height_down" step="0.1" size="4"></div>
         </div>
         <div class="ms"><h3>interpolate 参数</h3>
-          <div class="fd"><label>total</label><input type="number" id="pm-i-total" step="1"></div>
-          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006"></div>
-          <div class="fd"><label>radius_scale</label><input type="number" id="pm-i-radius_scale" step="0.01"></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button onclick="pmSave()" style="font-size:12px;padding:4px 10px">保存</button>
-          <button onclick="pmDelete()" class="danger" style="font-size:12px;padding:4px 10px;background:#c0392b;color:#fff;border:none;border-radius:3px;cursor:pointer">删除</button>
+          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"></div>
         </div>
       </div>
     </div>
@@ -910,7 +910,7 @@ def _build_presets_page() -> str:
     .nav{{margin-bottom:15px}}
     .nav a{{color:#5b7c5a;text-decoration:none;font-size:14px}}
     .toolbar{{display:flex;gap:10px;align-items:center;margin-bottom:15px;flex-wrap:wrap}}
-    select,input[type="text"],input[type="number"]{{padding:4px 8px;
+    select,input[type="text"],input[type="text"]{{padding:4px 8px;
            border:1px solid #d9cfb8;border-radius:3px;font-size:13px;
            background:#fffdf7}}
     button{{background:#6b8e6b;color:#fff;border:none;padding:5px 12px;
@@ -923,7 +923,7 @@ def _build_presets_page() -> str:
                  padding-bottom:4px;border-bottom:2px solid #d9cfb8}}
     .field{{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}}
     .field label{{font-size:13px;color:#5b5a4e;min-width:170px}}
-    .field input[type="number"]{{width:90px}}
+    .field input[type="text"]{{width:90px}}
     .field input[type="text"]{{width:140px}}
     .field input[type="checkbox"]{{width:auto;margin-right:4px}}
     #editor{{display:none}}
@@ -947,59 +947,59 @@ def _build_presets_page() -> str:
     <div class="section">
       <h2>fuse 参数</h2>
       <div class="field"><label>max_index</label>
-        <input type="number" id="f-max_index" step="1"></div>
+        <input type="text" id="f-max_index" step="1" size="4"></div>
       <div class="field"><label>radius_scale</label>
-        <input type="number" id="f-radius_scale" step="0.01"></div>
+        <input type="text" id="f-radius_scale" step="0.01" size="5"></div>
       <div class="field"><label>height_up (m)</label>
-        <input type="number" id="f-height_up" step="0.1"></div>
+        <input type="text" id="f-height_up" step="0.1" size="4"></div>
       <div class="field"><label>height_down (m)</label>
-        <input type="number" id="f-height_down" step="0.1"></div>
+        <input type="text" id="f-height_down" step="0.1" size="4"></div>
       <div class="field"><label>bias</label>
         <input type="checkbox" id="f-bias" onchange="toggleBias()"></div>
       <div class="field"><label>bias_margin (m)</label>
-        <input type="number" id="f-bias_margin" step="0.01"></div>
+        <input type="text" id="f-bias_margin" step="0.01" size="5"></div>
       <div class="field"><label>bias_radius_percentile</label>
-        <input type="number" id="f-bias_radius_percentile" step="1"></div>
+        <input type="text" id="f-bias_radius_percentile" step="1" size="4"></div>
     </div>
     <div class="section">
       <h2>clip 参数</h2>
       <div class="field"><label>clip_percent</label>
-        <input type="number" id="c-clip_percent" step="0.01"></div>
+        <input type="text" id="c-clip_percent" step="0.01" size="5"></div>
       <div class="field"><label>denoise</label>
         <input type="checkbox" id="c-denoise"></div>
       <div class="field"><label>denoise_method</label>
-        <input type="text" id="c-denoise_method" placeholder="region-grow"></div>
+        <input type="text" id="c-denoise_method" placeholder="region-grow" size="12"></div>
       <div class="field"><label>denoise_grid_cell (m)</label>
-        <input type="number" id="c-denoise_grid_cell" step="0.01"></div>
+        <input type="text" id="c-denoise_grid_cell" step="0.01" size="5"></div>
       <div class="field"><label>denoise_min_points</label>
-        <input type="number" id="c-denoise_min_points" step="1"></div>
+        <input type="text" id="c-denoise_min_points" step="1" size="4"></div>
       <div class="field"><label>denoise_voxel_size (m)</label>
-        <input type="number" id="c-denoise_voxel_size" step="0.01"></div>
+        <input type="text" id="c-denoise_voxel_size" step="0.01" size="5"></div>
       <div class="field"><label>height_up (m)</label>
-        <input type="number" id="c-height_up" step="0.1"></div>
+        <input type="text" id="c-height_up" step="0.1" size="4"></div>
       <div class="field"><label>height_down (m)</label>
-        <input type="number" id="c-height_down" step="0.1"></div>
+        <input type="text" id="c-height_down" step="0.1" size="4"></div>
       <div class="field"><label>radius_scale</label>
-        <input type="number" id="c-radius_scale" step="0.01"></div>
+        <input type="text" id="c-radius_scale" step="0.01" size="5"></div>
       <div class="field"><label>ring_delete</label>
         <input type="checkbox" id="c-ring_delete"></div>
       <div class="field"><label>ring_outer_delta (m)</label>
-        <input type="number" id="c-ring_outer_delta" step="0.01"></div>
+        <input type="text" id="c-ring_outer_delta" step="0.01" size="5"></div>
       <div class="field"><label>ring_inner_delta (m)</label>
-        <input type="number" id="c-ring_inner_delta" step="0.01"></div>
+        <input type="text" id="c-ring_inner_delta" step="0.01" size="5"></div>
       <div class="field"><label>ring_height_up (m)</label>
-        <input type="number" id="c-ring_height_up" step="0.1"></div>
+        <input type="text" id="c-ring_height_up" step="0.1" size="4"></div>
       <div class="field"><label>ring_height_down (m)</label>
-        <input type="number" id="c-ring_height_down" step="0.1"></div>
+        <input type="text" id="c-ring_height_down" step="0.1" size="4"></div>
     </div>
     <div class="section">
       <h2>interpolate 参数</h2>
       <div class="field"><label>total</label>
-        <input type="number" id="i-total" step="1"></div>
+        <input type="text" id="i-total" step="1" size="4"></div>
       <div class="field"><label>anchor_camera</label>
-        <input type="text" id="i-anchor_camera" placeholder="006"></div>
+        <input type="text" id="i-anchor_camera" placeholder="006" size="4"></div>
       <div class="field"><label>radius_scale</label>
-        <input type="number" id="i-radius_scale" step="0.01"></div>
+        <input type="text" id="i-radius_scale" step="0.01" size="5"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
