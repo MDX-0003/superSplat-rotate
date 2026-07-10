@@ -8,10 +8,10 @@
 
 ```powershell
 # 终端 1 — 训练守护进程（自动分发 + 监控 + 回收 PLY）
-uv run python -m tills.server.train_daemon --config CameraData/05/pipeline.json
+uv run python -m tills.server.train_daemon --config 06
 
 # 终端 2 — Fuse 服务（PLY 浏览 + fuse/clip + render）
-uv run python -m tills.server.fuse_server --config CameraData/05/pipeline.json
+uv run python -m tills.server.fuse_server --config 06
 ```
 
 | 服务 | 默认端口 | 浏览器 |

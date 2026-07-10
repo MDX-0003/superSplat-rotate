@@ -319,9 +319,30 @@ def run_server(server: HTTPServer,
         print(f"  HTTP server stopped.")
 
 
+# ── Config path resolver (shared by train_daemon and fuse_server) ──
+
+_CAMERA_DATA = Path(__file__).resolve().parent.parent.parent / "CameraData"
+
+
+def resolve_config_path(raw: str) -> Path:
+    """Resolve a --config argument to an absolute pipeline.json path.
+
+    If *raw* looks like a bare project name (no path separators, no .json
+    extension), expand it to ``CameraData/<raw>/pipeline.json``.
+    Otherwise treat it as a literal path.
+    """
+    p = Path(raw)
+    # bare project name: no slashes, no .json
+    if not ("/" in raw or "\\" in raw) and p.suffix != ".json":
+        p = _CAMERA_DATA / raw / "pipeline.json"
+    if not p.is_absolute():
+        p = Path.cwd() / p
+    return p.resolve()
+
+
 # ── Project init helper (shared by train_daemon and fuse_server) ──
 
-_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "CameraData" / "_template"
+_TEMPLATE_DIR = _CAMERA_DATA / "_template"
 
 
 def init_project(project_name: str) -> None:

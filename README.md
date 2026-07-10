@@ -89,10 +89,10 @@ uv run python -m tills.server.train_daemon init 06
 
 ```powershell
 # 终端 1 — 训练守护进程（自动扫描 raw_images → 分发训练 → 回收 PLY）
-uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json
+uv run python -m tills.server.train_daemon --config 06
 
 # 终端 2 — Fuse 服务（PLY 浏览 + interpolate/fuse/clip + Playwright 渲染）
-uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json
+uv run python -m tills.server.fuse_server --config 06
 ```
 
 | 服务 | 端口 | 浏览器 | 功能 |

@@ -11,9 +11,9 @@ Usage:
   # 项目初始化（首次使用）
   uv run python -m tills.server.fuse_server init 06
 
-  # 启动服务
-  uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json
-  uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json --port 8081
+  # 启动服务（--config 支持简写项目名或完整路径）
+  uv run python -m tills.server.fuse_server --config 06
+  uv run python -m tills.server.fuse_server --config 06 --port 8081
 """
 
 import argparse
@@ -1511,16 +1511,15 @@ def main():
 
     parser = argparse.ArgumentParser(description="v8 Fuse Server")
     parser.add_argument("--config", required=True,
-                        help="Path to pipeline.json")
+                        help="Project name (e.g. 06) or path to pipeline.json")
     parser.add_argument("--port", type=int, default=8081,
                         help="HTTP server port (default: 8081)")
     parser.add_argument("--force", action="store_true",
                         help="Force clean before fuse")
     args_p = parser.parse_args()
 
-    config_path = Path(args_p.config)
-    if not config_path.is_absolute():
-        config_path = Path.cwd() / config_path
+    from tills.server._server import resolve_config_path
+    config_path = resolve_config_path(args_p.config)
     if not config_path.exists():
         print(f"ERROR: config file not found: {config_path}")
         sys.exit(1)

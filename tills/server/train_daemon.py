@@ -6,9 +6,9 @@ Usage:
   # 项目初始化（首次使用）
   uv run python -m tills.server.train_daemon init 06
 
-  # 启动守护进程
-  uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json
-  uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json --port 8080
+  # 启动守护进程（--config 支持简写项目名或完整路径）
+  uv run python -m tills.server.train_daemon --config 06
+  uv run python -m tills.server.train_daemon --config 06 --port 8080
 
 Start this and leave it running.  Open http://localhost:8080 to monitor.
 """
@@ -69,6 +69,7 @@ class TrainState:
         self.workers: list[WorkerNode] = []
         self.running_processes: dict[str, tuple] = {}  # "KEY" → (WorkerNode, Popen)
         self.raw_images_dir: Path | None = None
+        self.scanning_enabled: bool = False  # toggled by web UI start/stop button
         self._lock = threading.Lock()
 
     def add_frame(self, frame_id: str, sub_dir: str, dirname: str = ""):
@@ -122,6 +123,8 @@ class TrainState:
             return {
                 "project": self.project,
                 "poll_interval": self.poll_interval,
+                "scanning_enabled": self.scanning_enabled,
+                "raw_images_dir": str(self.raw_images_dir) if self.raw_images_dir else "",
                 "frames": frame_list,
                 "workers": worker_list,
             }
@@ -194,6 +197,9 @@ _JS_SSE = """
                        + (w.current_frame ? ' (' + w.current_frame + ')' : '');
       }
     }
+    if (data.hasOwnProperty('scanning_enabled')) {
+      updateScanUI(data.scanning_enabled);
+    }
   });
   evtSource.addEventListener('log', function(e) {
     const parts = e.data.split(' ', 2);
@@ -231,6 +237,23 @@ _JS_SSE = """
         location.reload();
       });
   }
+  function doScanToggle(cmd) {{
+    fetch('/action', {{method:'POST',
+     headers:{{'Content-Type':'application/json'}},
+     body: JSON.stringify({{action: cmd}})
+    }}).then(r => r.json()).then(d => {{
+      if (d.status === 'ok') {{
+        updateScanUI(d.scanning_enabled);
+      }}
+    }});
+  }}
+  function updateScanUI(scanning) {{
+    document.getElementById('btn-scan-start').style.display = scanning ? 'none' : '';
+    document.getElementById('btn-scan-stop').style.display = scanning ? '' : 'none';
+    let st = document.getElementById('scan-status');
+    st.textContent = scanning ? '● 扫描中...' : '● 扫描已暂停';
+    st.style.color = scanning ? '#2e7d32' : '#c0392b';
+  }}
 </script>
 """
 
@@ -286,9 +309,17 @@ def build_page(state: TrainState) -> str:
 </head>
 <body>
   <h1>\U0001f682 v8 Train Daemon — project: {d['project']}</h1>
+  <div id="scan-control" style="margin:10px 0;display:flex;align-items:center;gap:10px">
+    <button id="btn-scan-start" onclick="doScanToggle('scan_start')"
+            style="background:#2e7d32;padding:8px 18px;font-size:14px">▶ 开始扫描</button>
+    <button id="btn-scan-stop" onclick="doScanToggle('scan_stop')"
+            style="background:#c0392b;padding:8px 18px;font-size:14px;display:none">⏹ 停止扫描</button>
+    <span id="scan-status" style="font-size:14px;color:#c0392b">● 扫描已暂停</span>
+  </div>
   <div class="info">
     Workers: {workers_html}
     | 轮询间隔: {d['poll_interval']}s
+    | 监控目录: {d['raw_images_dir']}
   </div>
   <table>
     <thead>
@@ -310,8 +341,20 @@ def handle_action(state: TrainState, body: dict) -> dict:
 
     Returns a result dict suitable for JSON response.
     """
-    key = body.get("key", "")
     action = body.get("action", "")
+
+    # ── global scan toggle (no frame key needed) ──
+    if action == "scan_start":
+        state.scanning_enabled = True
+        return {"status": "ok", "scanning_enabled": True,
+                "message": "扫描已开启"}
+    if action == "scan_stop":
+        state.scanning_enabled = False
+        return {"status": "ok", "scanning_enabled": False,
+                "message": "扫描已停止"}
+
+    # ── per-frame actions (require key) ──
+    key = body.get("key", "")
     level = body.get("level", "soft")
 
     frame = state.get_frame(key)
@@ -432,6 +475,14 @@ def main_loop(state: TrainState, cfg: dict,
             # Refresh worker online status
             online_workers = [w for w in state.workers if w.is_online]
             if not online_workers:
+                _emit_status()
+                stop_event.wait(state.poll_interval)
+                continue
+
+            if not state.scanning_enabled:
+                if _cycle % 12 == 0:
+                    print(f'  [scan #{_cycle}] 扫描已暂停（点击"开始扫描"按钮恢复）')
+                    _emit_log("daemon", f"扫描已暂停 (#{_cycle})")
                 _emit_status()
                 stop_event.wait(state.poll_interval)
                 continue
@@ -830,7 +881,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="v8 Train Daemon")
     parser.add_argument("--config", required=True,
-                        help="Path to pipeline.json")
+                        help="Project name (e.g. 06) or path to pipeline.json")
     parser.add_argument("--port", type=int, default=8080,
                         help="HTTP server port (default: 8080)")
     parser.add_argument("--force", action="store_true",
@@ -840,9 +891,8 @@ def main():
     args_p = parser.parse_args()
 
     # Load config
-    config_path = Path(args_p.config)
-    if not config_path.is_absolute():
-        config_path = Path.cwd() / config_path
+    from tills.server._server import resolve_config_path
+    config_path = resolve_config_path(args_p.config)
     if not config_path.exists():
         print(f"ERROR: config file not found: {config_path}")
         sys.exit(1)
