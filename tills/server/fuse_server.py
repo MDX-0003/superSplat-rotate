@@ -681,9 +681,261 @@ def _log_render(line: str, state: FuseState, broadcaster: SSEBroadcaster,
 # ── HTTP Handler ─────────────────────────────────────────────────────────────────
 
 def _build_presets_page() -> str:
-    """GET /presets — stub (implemented in Phase 2.1)."""
-    return """<!DOCTYPE html><html><body><h1>Presets</h1>
-    <p>Editor coming soon. <a href="/">Back</a></p></body></html>"""
+    """GET /presets — full preset editor page."""
+    presets = _load_all_presets()
+    names = sorted(presets.keys())
+
+    options = ""
+    for n in names:
+        options += f'<option value="{n}">{n}</option>'
+
+    return f"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>v8 Presets — Editor</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:"Segoe UI","Microsoft YaHei",sans-serif;
+          background:#f5f0e8;color:#3e3a35;padding:20px}}
+    h1{{color:#5b7c5a;margin-bottom:6px;font-size:22px}}
+    .nav{{margin-bottom:15px}}
+    .nav a{{color:#5b7c5a;text-decoration:none;font-size:14px}}
+    .toolbar{{display:flex;gap:10px;align-items:center;margin-bottom:15px;flex-wrap:wrap}}
+    select,input[type="text"],input[type="number"]{{padding:4px 8px;
+           border:1px solid #d9cfb8;border-radius:3px;font-size:13px;
+           background:#fffdf7}}
+    button{{background:#6b8e6b;color:#fff;border:none;padding:5px 12px;
+            cursor:pointer;border-radius:3px;font-size:13px}}
+    button.danger{{background:#c0392b}}
+    button:disabled{{opacity:0.4;cursor:default}}
+    .section{{background:#fffdf7;border:1px solid #d9cfb8;border-radius:6px;
+              padding:12px 16px;margin-bottom:12px}}
+    .section h2{{color:#5b7c5a;font-size:15px;margin-bottom:10px;
+                 padding-bottom:4px;border-bottom:2px solid #d9cfb8}}
+    .field{{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}}
+    .field label{{font-size:13px;color:#5b5a4e;min-width:170px}}
+    .field input[type="number"]{{width:90px}}
+    .field input[type="text"]{{width:140px}}
+    .field input[type="checkbox"]{{width:auto;margin-right:4px}}
+    #editor{{display:none}}
+    #no-preset{{color:#7a7368;font-size:14px;padding:20px 0}}
+  </style>
+</head>
+<body>
+  <h1>🧩 v8 Preset Editor</h1>
+  <div class="nav"><a href="/">← 返回主页面</a></div>
+  <div class="toolbar">
+    <select id="preset-select" onchange="loadPreset()">
+      <option value="">— 选择 Preset —</option>
+      {options}
+    </select>
+    <button onclick="doCreate()">+ 新建 Preset</button>
+  </div>
+
+  <div id="no-preset">请选择一个 Preset 以编辑参数。</div>
+
+  <div id="editor">
+    <div class="section">
+      <h2>fuse 参数</h2>
+      <div class="field"><label>max_index</label>
+        <input type="number" id="f-max_index" step="1"></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="number" id="f-radius_scale" step="0.01"></div>
+      <div class="field"><label>height_up (m)</label>
+        <input type="number" id="f-height_up" step="0.1"></div>
+      <div class="field"><label>height_down (m)</label>
+        <input type="number" id="f-height_down" step="0.1"></div>
+      <div class="field"><label>bias</label>
+        <input type="checkbox" id="f-bias" onchange="toggleBias()"></div>
+      <div class="field"><label>bias_margin (m)</label>
+        <input type="number" id="f-bias_margin" step="0.01"></div>
+      <div class="field"><label>bias_radius_percentile</label>
+        <input type="number" id="f-bias_radius_percentile" step="1"></div>
+    </div>
+    <div class="section">
+      <h2>clip 参数</h2>
+      <div class="field"><label>clip_percent</label>
+        <input type="number" id="c-clip_percent" step="0.01"></div>
+      <div class="field"><label>denoise</label>
+        <input type="checkbox" id="c-denoise"></div>
+      <div class="field"><label>denoise_method</label>
+        <input type="text" id="c-denoise_method" placeholder="region-grow"></div>
+      <div class="field"><label>denoise_grid_cell (m)</label>
+        <input type="number" id="c-denoise_grid_cell" step="0.01"></div>
+      <div class="field"><label>denoise_min_points</label>
+        <input type="number" id="c-denoise_min_points" step="1"></div>
+      <div class="field"><label>denoise_voxel_size (m)</label>
+        <input type="number" id="c-denoise_voxel_size" step="0.01"></div>
+      <div class="field"><label>height_up (m)</label>
+        <input type="number" id="c-height_up" step="0.1"></div>
+      <div class="field"><label>height_down (m)</label>
+        <input type="number" id="c-height_down" step="0.1"></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="number" id="c-radius_scale" step="0.01"></div>
+      <div class="field"><label>ring_delete</label>
+        <input type="checkbox" id="c-ring_delete"></div>
+      <div class="field"><label>ring_outer_delta (m)</label>
+        <input type="number" id="c-ring_outer_delta" step="0.01"></div>
+      <div class="field"><label>ring_inner_delta (m)</label>
+        <input type="number" id="c-ring_inner_delta" step="0.01"></div>
+      <div class="field"><label>ring_height_up (m)</label>
+        <input type="number" id="c-ring_height_up" step="0.1"></div>
+      <div class="field"><label>ring_height_down (m)</label>
+        <input type="number" id="c-ring_height_down" step="0.1"></div>
+    </div>
+    <div class="section">
+      <h2>interpolate 参数</h2>
+      <div class="field"><label>total</label>
+        <input type="number" id="i-total" step="1"></div>
+      <div class="field"><label>anchor_camera</label>
+        <input type="text" id="i-anchor_camera" placeholder="006"></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="number" id="i-radius_scale" step="0.01"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button onclick="doSave()">保存</button>
+      <button class="danger" onclick="doDelete()">删除此 Preset</button>
+    </div>
+  </div>
+
+  <script>
+    let currentName = '';
+    let presetData = null;
+
+    async function loadPreset() {{
+      currentName = document.getElementById('preset-select').value;
+      if (!currentName) {{
+        document.getElementById('editor').style.display = 'none';
+        document.getElementById('no-preset').style.display = 'block';
+        return;
+      }}
+      document.getElementById('no-preset').style.display = 'none';
+      let r = await fetch('/presets/data');
+      let all = await r.json();
+      presetData = all.presets[currentName];
+      if (!presetData) return;
+      document.getElementById('editor').style.display = 'block';
+      populateForm(presetData);
+    }}
+
+    function populateForm(p) {{
+      setVal('f-max_index', p.max_index);
+      setVal('f-radius_scale', p.fuse?.radius_scale);
+      setVal('f-height_up', p.fuse?.height_up);
+      setVal('f-height_down', p.fuse?.height_down);
+      setVal('f-bias', p.fuse?.bias, true);
+      setVal('f-bias_margin', p.fuse?.bias_margin);
+      setVal('f-bias_radius_percentile', p.fuse?.bias_radius_percentile);
+      setVal('c-clip_percent', p.clip?.clip_percent);
+      setVal('c-denoise', p.clip?.denoise, true);
+      setVal('c-denoise_method', p.clip?.denoise_method, false, true);
+      setVal('c-denoise_grid_cell', p.clip?.denoise_grid_cell);
+      setVal('c-denoise_min_points', p.clip?.denoise_min_points);
+      setVal('c-denoise_voxel_size', p.clip?.denoise_voxel_size);
+      setVal('c-height_up', p.clip?.height_up);
+      setVal('c-height_down', p.clip?.height_down);
+      setVal('c-radius_scale', p.clip?.radius_scale);
+      setVal('c-ring_delete', p.clip?.ring_delete, true);
+      setVal('c-ring_outer_delta', p.clip?.ring_outer_delta);
+      setVal('c-ring_inner_delta', p.clip?.ring_inner_delta);
+      setVal('c-ring_height_up', p.clip?.ring_height_up);
+      setVal('c-ring_height_down', p.clip?.ring_height_down);
+      setVal('i-total', p.interpolate?.total);
+      setVal('i-anchor_camera', p.interpolate?.anchor_camera, false, true);
+      setVal('i-radius_scale', p.interpolate?.radius_scale);
+      toggleBias();
+    }}
+
+    function setVal(id, val, isCheckbox, isText) {{
+      let el = document.getElementById(id);
+      if (!el) return;
+      if (isCheckbox) {{ el.checked = !!val; }}
+      else if (isText) {{ if (val !== undefined && val !== null) el.value = val; }}
+      else {{ if (val !== undefined && val !== null) el.value = val; }}
+    }}
+
+    function toggleBias() {{
+      let bias = document.getElementById('f-bias').checked;
+      document.getElementById('f-bias_margin').disabled = !bias;
+      document.getElementById('f-bias_radius_percentile').disabled = !bias;
+    }}
+
+    function floatVal(id) {{
+      let v = parseFloat(document.getElementById(id).value);
+      return isNaN(v) ? null : v;
+    }}
+    function intVal(id) {{
+      let v = parseInt(document.getElementById(id).value);
+      return isNaN(v) ? null : v;
+    }}
+
+    function collectParams() {{
+      let params = {{max_index: intVal('f-max_index'),
+                     fuse: {{}}, clip: {{}}, interpolate: {{}}}};
+      params.fuse.radius_scale = floatVal('f-radius_scale');
+      params.fuse.height_up = floatVal('f-height_up');
+      params.fuse.height_down = floatVal('f-height_down');
+      params.fuse.bias = document.getElementById('f-bias').checked;
+      params.fuse.bias_margin = floatVal('f-bias_margin');
+      params.fuse.bias_radius_percentile = intVal('f-bias_radius_percentile');
+      params.clip.clip_percent = floatVal('c-clip_percent');
+      params.clip.denoise = document.getElementById('c-denoise').checked;
+      params.clip.denoise_method = document.getElementById('c-denoise_method').value;
+      params.clip.denoise_grid_cell = floatVal('c-denoise_grid_cell');
+      params.clip.denoise_min_points = intVal('c-denoise_min_points');
+      params.clip.denoise_voxel_size = floatVal('c-denoise_voxel_size');
+      params.clip.height_up = floatVal('c-height_up');
+      params.clip.height_down = floatVal('c-height_down');
+      params.clip.radius_scale = floatVal('c-radius_scale');
+      params.clip.ring_delete = document.getElementById('c-ring_delete').checked;
+      params.clip.ring_outer_delta = floatVal('c-ring_outer_delta');
+      params.clip.ring_inner_delta = floatVal('c-ring_inner_delta');
+      params.clip.ring_height_up = floatVal('c-ring_height_up');
+      params.clip.ring_height_down = floatVal('c-ring_height_down');
+      params.interpolate.total = intVal('i-total');
+      params.interpolate.anchor_camera = document.getElementById('i-anchor_camera').value;
+      params.interpolate.radius_scale = floatVal('i-radius_scale');
+      return params;
+    }}
+
+    async function doSave() {{
+      if (!currentName) return;
+      let params = collectParams();
+      let r = await fetch('/presets/save', {{
+        method:'POST', headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{name: currentName, params: params}})
+      }});
+      let d = await r.json();
+      alert(d.status === 'ok' ? '已保存' : ('ERROR: ' + d.message));
+    }}
+
+    async function doDelete() {{
+      if (!currentName) return;
+      if (!confirm('确认删除 preset: ' + currentName + '？')) return;
+      let r = await fetch('/presets/delete', {{
+        method:'POST', headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{name: currentName}})
+      }});
+      let d = await r.json();
+      if (d.status === 'ok') location.reload();
+      else alert('ERROR: ' + d.message);
+    }}
+
+    async function doCreate() {{
+      let name = prompt('新 Preset 名称:');
+      if (!name || !name.trim()) return;
+      let r = await fetch('/presets/create', {{
+        method:'POST', headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{name: name.trim()}})
+      }});
+      let d = await r.json();
+      if (d.status === 'ok') location.reload();
+      else alert('ERROR: ' + d.message);
+    }}
+  </script>
+</body>
+</html>"""
 
 
 def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
