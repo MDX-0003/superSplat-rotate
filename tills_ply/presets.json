@@ -95,7 +95,7 @@
                 "height_up": 3,
                 "height_down": 0.5,
                 "bias": true,
-                "bias_margin": 0.3,
+                "bias_margin": 0.2,
                 "bias_radius_percentile": 15,
                 "indices": [
                     1,
