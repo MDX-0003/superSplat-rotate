@@ -34,7 +34,37 @@ from tills.server._server import (
 )
 
 TILLS_PLY_DIR = _project_root / "tills_ply"
+PRESETS_FILE = _project_root / "tills_ply" / "presets.json"
+PRESET_TEMPLATE_FILE = _project_root / "CameraData" / "_template" / "presets.json"
 SUPERSPLAT_URL = "http://127.0.0.1:3000/"
+
+
+# ── Preset file I/O ──────────────────────────────────────────────────────────────
+
+def _load_all_presets() -> dict:
+    """Return the full presets dict ``{name: {...}}`` from presets.json."""
+    if not PRESETS_FILE.exists():
+        return {}
+    with open(PRESETS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f).get("presets", {})
+
+
+def _load_template_preset() -> dict:
+    """Load the single template preset from CameraData/_template/presets.json."""
+    if not PRESET_TEMPLATE_FILE.exists():
+        return {}
+    with open(PRESET_TEMPLATE_FILE, "r", encoding="utf-8") as f:
+        templates = json.load(f).get("presets", {})
+    return templates.get("template", {})
+
+
+def _save_all_presets(presets: dict) -> None:
+    """Atomically write the full presets dict back to presets.json."""
+    data = {"_doc": "Named parameter presets for ply_pipeline.py.", "presets": presets}
+    tmp = PRESETS_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+    tmp.replace(PRESETS_FILE)
 
 
 # ── State ────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,42 @@
+{
+    "presets": {
+        "template": {
+            "path": "CameraData/02",
+            "max_index": 89,
+            "description": "",
+            "interpolate": {
+                "total": 250,
+                "anchor_camera": "006",
+                "radius_scale": 0.8
+            },
+            "fuse": {
+                "radius_scale": 0.8,
+                "height_up": 3,
+                "height_down": 0.5,
+                "bias": true,
+                "bias_margin": 0.2,
+                "bias_radius_percentile": 15,
+                "indices": [
+                    1,2,3
+                ],
+                "output_subfix": ""
+            },
+            "clip": {
+                "clip_percent": 0.1,
+                "denoise": true,
+                "denoise_method": "region-grow",
+                "denoise_grid_cell": 0.15,
+                "denoise_min_points": 20,
+                "denoise_voxel_size": 0.2,
+                "height_up": 3.0,
+                "height_down": 0.5,
+                "radius_scale": 1.0,
+                "ring_delete": true,
+                "ring_outer_delta": 0.2,
+                "ring_inner_delta": 0.3,
+                "ring_height_up": 1.5,
+                "ring_height_down": 0.3
+            }
+        }
+    }
+}
