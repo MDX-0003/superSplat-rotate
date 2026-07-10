@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -69,7 +70,8 @@ class TrainState:
         self.workers: list[WorkerNode] = []
         self.running_processes: dict[str, tuple] = {}  # "KEY" → (WorkerNode, Popen)
         self.raw_images_dir: Path | None = None
-        self.scanning_enabled: bool = False  # toggled by web UI start/stop button
+        self.training_enabled: bool = False  # toggled by web UI start/stop button
+        self.cali_running: bool = False       # true while generate_cali background thread runs
         self._lock = threading.Lock()
 
     def add_frame(self, frame_id: str, sub_dir: str, dirname: str = ""):
@@ -123,7 +125,8 @@ class TrainState:
             return {
                 "project": self.project,
                 "poll_interval": self.poll_interval,
-                "scanning_enabled": self.scanning_enabled,
+                "training_enabled": self.training_enabled,
+                "cali_running": self.cali_running,
                 "raw_images_dir": str(self.raw_images_dir) if self.raw_images_dir else "",
                 "frames": frame_list,
                 "workers": worker_list,
@@ -183,11 +186,17 @@ _JS_SSE = """
     for (const f of data.frames) {
       let row = document.getElementById('row-' + f.key);
       if (!row) { location.reload(); return; }
-      row.cells[1].innerHTML = '<span class="st-' + f.status + '">'
+      let oldStatus = row.cells[2].textContent.trim();
+      row.cells[2].innerHTML = '<span class="st-' + f.status + '">'
                                + f.status + '</span>';
-      row.cells[2].textContent = f.worker_id || '—';
+      row.cells[3].textContent = f.worker_id || '—';
       const iter = f.total_iterations ? f.iteration + '/' + f.total_iterations : '—';
-      row.cells[3].textContent = iter;
+      row.cells[4].textContent = iter;
+      // after clean, frame resets to new → action buttons need refresh
+      if ((f.status === 'new' || f.status === 'checking' || f.status === 'ready')
+          && oldStatus !== f.status) {
+        location.reload();
+      }
     }
     for (const w of data.workers) {
       let el = document.getElementById('worker-' + w.id);
@@ -197,8 +206,12 @@ _JS_SSE = """
                        + (w.current_frame ? ' (' + w.current_frame + ')' : '');
       }
     }
-    if (data.hasOwnProperty('scanning_enabled')) {
-      updateScanUI(data.scanning_enabled);
+    if (data.hasOwnProperty('training_enabled')) {
+      updateScanUI(data.training_enabled);
+    }
+    if (data.hasOwnProperty('cali_running')) {
+      document.getElementById('cali-status').style.display = data.cali_running ? '' : 'none';
+      updateCaliButton();
     }
   });
   evtSource.addEventListener('log', function(e) {
@@ -220,40 +233,87 @@ _JS_SSE = """
     fetch('/action', {method:'POST',
      headers:{'Content-Type':'application/json'}, body:body})
       .then(r => r.json()).then(d => {
-        if (d.status === 'ok') {
-          if (d.deleted) {
-            // cleanup response
-            let msg = action + ' [' + (d.level||'') + '] OK — '
-                    + 'deleted: ' + d.deleted.length
-                    + ', skipped: ' + (d.skipped ? d.skipped.length : 0);
-            alert(msg);
-          } else {
-            // stop response
-            alert(action + ' OK: ' + (d.message || 'done'));
-          }
-        } else {
+        if (d.status !== 'ok') {
           alert(action + ' FAILED: ' + (d.message || JSON.stringify(d)));
         }
-        location.reload();
       });
   }
-  function doScanToggle(cmd) {{
-    fetch('/action', {{method:'POST',
-     headers:{{'Content-Type':'application/json'}},
-     body: JSON.stringify({{action: cmd}})
-    }}).then(r => r.json()).then(d => {{
-      if (d.status === 'ok') {{
-        updateScanUI(d.scanning_enabled);
-      }}
-    }});
-  }}
-  function updateScanUI(scanning) {{
+  function doScanToggle(cmd) {
+    fetch('/action', {method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({action: cmd})
+    }).then(r => r.json()).then(d => {
+      if (d.status === 'ok') {
+        updateScanUI(d.training_enabled);
+      }
+    });
+  }
+  function updateScanUI(scanning) {
     document.getElementById('btn-scan-start').style.display = scanning ? 'none' : '';
     document.getElementById('btn-scan-stop').style.display = scanning ? '' : 'none';
     let st = document.getElementById('scan-status');
-    st.textContent = scanning ? '● 扫描中...' : '● 扫描已暂停';
+    st.textContent = scanning ? '● 训练中...' : '● 训练已暂停';
     st.style.color = scanning ? '#2e7d32' : '#c0392b';
-  }}
+    updateCaliButton();
+  }
+  function selectCaliRow(tr, evt) {
+    if (evt.target.tagName === 'BUTTON') return;
+    let radio = tr.querySelector('input[name="cali-frame"]');
+    if (radio) { radio.checked = true; updateCaliButton(); }
+  }
+  function updateCaliButton() {
+    let scanningStopped = document.getElementById('btn-scan-start').style.display !== 'none';
+    let selected = document.querySelector('input[name="cali-frame"]:checked');
+    let caliRunning = document.getElementById('cali-status').style.display !== 'none';
+    let btnGen = document.getElementById('btn-cali-gen');
+    let btnDist = document.getElementById('btn-cali-dist');
+    let startBtn = document.getElementById('btn-scan-start');
+    if (caliRunning) {
+      btnGen.disabled = true;
+      btnDist.disabled = true;
+      startBtn.disabled = true;
+    } else {
+      btnGen.disabled = !(scanningStopped && selected);
+      btnDist.disabled = !(scanningStopped && selected);
+      startBtn.disabled = false;
+    }
+  }
+  function doGenerateCali() {
+    let selected = document.querySelector('input[name="cali-frame"]:checked');
+    if (!selected) { alert('请选择一个帧'); return; }
+    let key = selected.value;
+    let dirname = selected.dataset.dirname;
+    document.getElementById('cali-status').style.display = '';
+    updateCaliButton();
+    fetch('/action', {method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({action: 'generate_cali', key: key, dirname: dirname})
+    }).then(r => r.json()).then(d => {
+      if (d.status !== 'ok') {
+        document.getElementById('cali-status').style.display = 'none';
+        updateCaliButton();
+        alert('ERROR: ' + (d.message || JSON.stringify(d)));
+      }
+    });
+  }
+  function doDistributeCali() {
+    let selected = document.querySelector('input[name="cali-frame"]:checked');
+    if (!selected) { alert('请选择一个帧'); return; }
+    let key = selected.value;
+    let dirname = selected.dataset.dirname;
+    document.getElementById('cali-status').style.display = '';
+    updateCaliButton();
+    fetch('/action', {method:'POST',
+     headers:{'Content-Type':'application/json'},
+     body: JSON.stringify({action: 'distribute_cali', key: key, dirname: dirname})
+    }).then(r => r.json()).then(d => {
+      if (d.status !== 'ok') {
+        document.getElementById('cali-status').style.display = 'none';
+        updateCaliButton();
+        alert('ERROR: ' + (d.message || JSON.stringify(d)));
+      }
+    });
+  }
 </script>
 """
 
@@ -276,7 +336,10 @@ def build_page(state: TrainState) -> str:
                         f'onclick="doAction(\'{f["key"]}\',\'clean\',\'hard\')">清理 hard</button>')
 
         rows_html += f"""
-        <tr id="row-{f['key']}">
+        <tr id="row-{f['key']}" onclick="selectCaliRow(this, event)">
+          <td><input type="radio" name="cali-frame" value="{f['key']}"
+                     data-dirname="{f['dirname']}"
+                     onchange="updateCaliButton()"></td>
           <td>{f['frame_id']}</td>
           <td><span class="st-{f['status']}">{f['status']}</span></td>
           <td>{f['worker_id'] or '—'}</td>
@@ -310,11 +373,17 @@ def build_page(state: TrainState) -> str:
 <body>
   <h1>\U0001f682 v8 Train Daemon — project: {d['project']}</h1>
   <div id="scan-control" style="margin:10px 0;display:flex;align-items:center;gap:10px">
-    <button id="btn-scan-start" onclick="doScanToggle('scan_start')"
-            style="background:#2e7d32;padding:8px 18px;font-size:14px">▶ 开始扫描</button>
-    <button id="btn-scan-stop" onclick="doScanToggle('scan_stop')"
-            style="background:#c0392b;padding:8px 18px;font-size:14px;display:none">⏹ 停止扫描</button>
-    <span id="scan-status" style="font-size:14px;color:#c0392b">● 扫描已暂停</span>
+    <button id="btn-scan-start" onclick="doScanToggle('training_start')"
+            style="background:#2e7d32;padding:8px 18px;font-size:14px;{('display:none' if d['training_enabled'] else '')}">▶ 开始训练</button>
+    <button id="btn-scan-stop" onclick="doScanToggle('training_stop')"
+            style="background:#c0392b;padding:8px 18px;font-size:14px;{('' if d['training_enabled'] else 'display:none')}">⏹ 停止训练</button>
+    <span id="scan-status" style="font-size:14px;color:{'#2e7d32' if d['training_enabled'] else '#c0392b'}">{'● 训练中...' if d['training_enabled'] else '● 训练已暂停'}</span>
+    <span style="flex:1"></span>
+    <span id="cali-status" style="font-size:13px;color:#1565c0;{('' if d['cali_running'] else 'display:none')}">🔄 标定中...</span>
+    <button id="btn-cali-gen" onclick="doGenerateCali()"
+            style="background:#1565c0;padding:8px 18px;font-size:14px" disabled>📷 生成位姿</button>
+    <button id="btn-cali-dist" onclick="doDistributeCali()"
+            style="background:#6b8e6b;padding:8px 18px;font-size:14px" disabled>📡 分发位姿</button>
   </div>
   <div class="info">
     Workers: {workers_html}
@@ -323,7 +392,7 @@ def build_page(state: TrainState) -> str:
   </div>
   <table>
     <thead>
-      <tr><th>帧号</th><th>状态</th><th>Worker</th><th>迭代</th><th>操作</th></tr>
+      <tr><th>位姿</th><th>帧号</th><th>状态</th><th>Worker</th><th>迭代</th><th>操作</th></tr>
     </thead>
     <tbody>{rows_html}</tbody>
   </table>
@@ -336,22 +405,71 @@ def build_page(state: TrainState) -> str:
 
 # ── Action handler ───────────────────────────────────────────────────────────────
 
-def handle_action(state: TrainState, body: dict) -> dict:
-    """Process a user action (stop / clean).
+def handle_action(state: TrainState, body: dict,
+                  cfg: dict | None = None,
+                  broadcaster=None) -> dict:
+    """Process a user action (stop / clean / generate_cali).
 
     Returns a result dict suitable for JSON response.
     """
     action = body.get("action", "")
 
     # ── global scan toggle (no frame key needed) ──
-    if action == "scan_start":
-        state.scanning_enabled = True
-        return {"status": "ok", "scanning_enabled": True,
-                "message": "扫描已开启"}
-    if action == "scan_stop":
-        state.scanning_enabled = False
-        return {"status": "ok", "scanning_enabled": False,
-                "message": "扫描已停止"}
+    if action == "training_start":
+        state.training_enabled = True
+        return {"status": "ok", "training_enabled": True,
+                "message": "训练分发已开启"}
+    if action == "training_stop":
+        state.training_enabled = False
+        return {"status": "ok", "training_enabled": False,
+                "message": "训练分发已停止"}
+
+    # ── generate calibration (spawns background thread) ──
+    if action == "generate_cali":
+        key = body.get("key", "")
+        dirname = body.get("dirname", "")
+        if not key or not dirname:
+            return {"status": "error", "message": "缺少帧信息"}
+        try:
+            from tills._shared import parse_frame_dirname
+            sub_dir, frame_id = parse_frame_dirname(dirname)
+        except ValueError as e:
+            return {"status": "error", "message": f"无法解析帧目录名: {e}"}
+        state.cali_running = True
+        t = threading.Thread(
+            target=run_generate_cali,
+            args=(state, key, sub_dir, dirname, cfg, broadcaster),
+            daemon=True,
+        )
+        t.start()
+        return {"status": "ok",
+                "message": f"标定任务已启动: {key} → calibration/{sub_dir}"}
+
+    # ── distribute calibration ──
+    if action == "distribute_cali":
+        key = body.get("key", "")
+        dirname = body.get("dirname", "")
+        if not key or not dirname:
+            return {"status": "error", "message": "缺少帧信息"}
+        try:
+            from tills._shared import parse_frame_dirname
+            sub_dir, frame_id = parse_frame_dirname(dirname)
+        except ValueError as e:
+            return {"status": "error", "message": f"无法解析帧目录名: {e}"}
+        # Quick pre-check: host cali must exist
+        host_cali = Path(cfg.get("litegs_path", "")) / "data" / "calibration" / sub_dir
+        if not (host_cali / "sparse" / "cameras.txt").exists():
+            return {"status": "error",
+                    "message": f"主机标定数据不完整，请先生成位姿"}
+        state.cali_running = True
+        t = threading.Thread(
+            target=run_distribute_cali,
+            args=(state, key, sub_dir, dirname, cfg, broadcaster),
+            daemon=True,
+        )
+        t.start()
+        return {"status": "ok",
+                "message": f"分发任务已启动: {key} → calibration/{sub_dir}"}
 
     # ── per-frame actions (require key) ──
     key = body.get("key", "")
@@ -388,6 +506,9 @@ def handle_action(state: TrainState, body: dict) -> dict:
 
         state.update_frame(key, status="failed",
                            error_message=f"stopped by user: {msg}")
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
         return {"status": "ok" if ok else "error", "message": msg}
 
     elif action == "clean":
@@ -413,9 +534,202 @@ def handle_action(state: TrainState, body: dict) -> dict:
                                worker_id="",
                                iteration=0, total_iterations=0,
                                error_message="", retry_count=0)
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
         return result
 
     return {"status": "error", "message": f"unknown action: {action}"}
+
+
+# ── Calibration helpers ─────────────────────────────────────────────────────────────
+
+def _backup_cali_dir(cali_dir: Path, backup_root: Path, sub_dir: str) -> Path | None:
+    """Move *cali_dir* to *backup_root*/<sub_dir>-N (incrementing suffix).
+
+    Returns the backup path, or None if *cali_dir* does not exist.
+    """
+    if not cali_dir.exists():
+        return None
+    idx = 1
+    while True:
+        backup = backup_root / f"{sub_dir}-{idx}"
+        if not backup.exists():
+            break
+        idx += 1
+    backup_root.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(cali_dir), str(backup))
+    return backup
+
+
+# ── Calibration background tasks ────────────────────────────────────────────────────
+
+def run_generate_cali(state: TrainState, key: str, sub_dir: str,
+                      dirname: str, cfg: dict, broadcaster):
+    """Background thread: backup old cali → copy images → run COLMAP."""
+    litegs_path = Path(cfg.get("litegs_path", ""))
+    cali_root = litegs_path / "data" / "calibration"
+    old_cali_root = litegs_path / "data" / "old-cali"
+    raw_dir = Path(cfg.get("raw_images_path", ""))
+    frame_dir = raw_dir / dirname
+
+    def _log(msg: str):
+        print(f"  [cali:{key}] {msg}")
+        if broadcaster:
+            broadcaster.broadcast("log", f"daemon [cali:{key}] {msg}")
+
+    _log(f"开始标定位姿: sub_dir={sub_dir}, dirname={dirname}")
+
+    try:
+        if not frame_dir.is_dir():
+            _log(f"ERROR: 帧目录不存在: {frame_dir}")
+            return
+
+        cali_dir = cali_root / sub_dir
+
+        # Backup existing calibration
+        backup = _backup_cali_dir(cali_dir, old_cali_root, sub_dir)
+        if backup:
+            _log(f"已有标定数据已备份至: {backup}")
+
+        # Copy frame images to calibration directory
+        cali_dir.mkdir(parents=True, exist_ok=True)
+        IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+        image_count = 0
+        for img in sorted(frame_dir.iterdir()):
+            if img.is_file() and img.suffix.lower() in IMG_EXTS:
+                shutil.copy2(str(img), str(cali_dir / img.name))
+                image_count += 1
+        _log(f"已拷贝 {image_count} 张图片到 {cali_dir}")
+
+        if image_count == 0:
+            _log("ERROR: 帧目录中没有图片文件")
+            return
+
+        # Run prepare_calibration.py
+        script = litegs_path / "utils" / "prepare_calibration.py"
+        cmd = [
+            "uv", "run", "python", str(script),
+            "--sub_dir", sub_dir,
+        ]
+        _log(f"执行: {' '.join(cmd)}")
+        proc = subprocess.Popen(
+            cmd, cwd=str(litegs_path),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+        )
+        for line in proc.stdout:
+            line = line.rstrip("\n\r")
+            if line:
+                _log(line)
+        rc = proc.wait(timeout=7200)
+        if rc != 0:
+            _log(f"COLMAP FAILED (exit {rc})")
+            return
+        _log("标定位姿生成完成 ✓")
+
+    except subprocess.TimeoutExpired:
+        _log("TIMEOUT: COLMAP 超时 (2h)")
+    except Exception as e:
+        _log(f"ERROR: {e}")
+    finally:
+        state.cali_running = False
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
+
+
+def run_distribute_cali(state: TrainState, key: str, sub_dir: str,
+                        dirname: str, cfg: dict, broadcaster):
+    """Background thread: verify host cali → backup + SCP to each remote worker."""
+    litegs_path = Path(cfg.get("litegs_path", ""))
+    cali_root = litegs_path / "data" / "calibration"
+    host_cali = cali_root / sub_dir
+
+    def _log(msg: str):
+        print(f"  [dist:{key}] {msg}")
+        if broadcaster:
+            broadcaster.broadcast("log", f"daemon [dist:{key}] {msg}")
+
+    _log(f"开始分发音位: sub_dir={sub_dir}")
+
+    try:
+        # 1. Verify host calibration is complete
+        sparse_txt = host_cali / "sparse" / "cameras.txt"
+        sparse_bin_dir = host_cali / "sparse_bin"
+        if not sparse_txt.exists():
+            _log("ERROR: 主机标定数据不完整 (sparse/cameras.txt 不存在)，请先生成位姿")
+            return
+        if not sparse_bin_dir.is_dir() or not any(sparse_bin_dir.iterdir()):
+            _log("ERROR: 主机标定数据不完整 (sparse_bin/ 为空)，请先生成位姿")
+            return
+        _log("主机标定数据完整 ✓")
+
+        # 2. Distribute to each remote worker
+        remote_workers = [w for w in state.workers if not w.is_host and w.is_online]
+        if not remote_workers:
+            _log("没有在线副机需要分发")
+            return
+
+        from tills._distributed import ssh_run, scp_send_multi
+
+        for w in remote_workers:
+            _log(f"--- {w.id} ({w.ip}) ---")
+            worker_litegs = Path(w.litegs_path)
+            worker_cali = worker_litegs / "data" / "calibration" / sub_dir
+            worker_old = worker_litegs / "data" / "old-cali"
+
+            # 2a. Check + backup worker's existing calibration via SSH
+            check_cmd = f'if exist "{worker_cali}" (echo EXISTS) else (echo NOT_FOUND)'
+            result = ssh_run(w, check_cmd, timeout=30)
+            if "EXISTS" in (result.stdout or ""):
+                # Build backup move command
+                move_cmd = _build_remote_backup_cmd(worker_cali, worker_old, sub_dir)
+                _log(f"备份副机已有标定: {move_cmd}")
+                move_result = ssh_run(w, move_cmd, timeout=60)
+                if move_result.returncode != 0:
+                    _log(f"WARNING: 备份失败 (exit {move_result.returncode})")
+                    if move_result.stderr:
+                        _log(f"  [stderr] {move_result.stderr.strip()}")
+                else:
+                    _log(f"已备份副机标定")
+
+            # 2b. Ensure target parent exists on worker
+            parent = str(worker_cali.parent).replace("\\", "/")
+            mkdir_cmd = f'if not exist "{worker_cali.parent}" mkdir "{worker_cali.parent}"'
+            ssh_run(w, mkdir_cmd, timeout=30)
+
+            # 2c. SCP host calibration directory to worker
+            host_cali_str = str(host_cali)
+            _log(f"SCP {host_cali_str} → {w.id}:{parent}/")
+            ok = scp_send_multi(w, [host_cali_str], parent)
+            if ok:
+                _log(f"{w.id} 分发完成 ✓")
+            else:
+                _log(f"ERROR: {w.id} SCP 失败")
+
+        _log("分发音位完成")
+
+    except Exception as e:
+        _log(f"ERROR: {e}")
+    finally:
+        state.cali_running = False
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
+
+
+def _build_remote_backup_cmd(cali_dir: Path, backup_root: Path, sub_dir: str) -> str:
+    """Build a cmd.exe command to atomically move a directory with incrementing suffix."""
+    return (
+        f'powershell -Command "'
+        f'$src=\'{cali_dir}\'; $dstRoot=\'{backup_root}\'; $name=\'{sub_dir}\'; '
+        f'if (-not (Test-Path $src)) {{ exit 0 }}; '
+        f'New-Item -ItemType Directory -Force -Path $dstRoot | Out-Null; '
+        f'$n=1; while (Test-Path \\"$dstRoot\\$name-$n\\") {{ $n++ }}; '
+        f'Move-Item -Path $src -Destination \\"$dstRoot\\$name-$n\\"'
+        f'"'
+    )
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────────
@@ -479,15 +793,7 @@ def main_loop(state: TrainState, cfg: dict,
                 stop_event.wait(state.poll_interval)
                 continue
 
-            if not state.scanning_enabled:
-                if _cycle % 12 == 0:
-                    print(f'  [scan #{_cycle}] 扫描已暂停（点击"开始扫描"按钮恢复）')
-                    _emit_log("daemon", f"扫描已暂停 (#{_cycle})")
-                _emit_status()
-                stop_event.wait(state.poll_interval)
-                continue
-
-            # ── 1. Scan raw_images/ ──
+            # ── 1. Scan raw_images/ (always runs — populates frame list for UI) ──
             if raw_dir.is_dir():
                 scanned = 0
                 for fd in sorted(raw_dir.iterdir()):
@@ -620,10 +926,10 @@ def main_loop(state: TrainState, cfg: dict,
                                 print(f"  [scan] REMOVED {k} — "
                                       f"raw_images directory gone")
 
-            # ── 2. Dispatch ready frames (round-robin to least-loaded worker) ──
+            # ── 2. Dispatch ready frames (only when training enabled) ──
             ready_frames = [(k, fs) for k, fs in state.frames.items()
                             if fs.status == "ready"]
-            if ready_frames:
+            if state.training_enabled and ready_frames:
                 worker_loads = {w.id: 0 for w in online_workers}
                 for fs in state.frames.values():
                     if fs.status == "training" and fs.worker_id:
@@ -840,7 +1146,7 @@ def main_loop(state: TrainState, cfg: dict,
 
 # ── HTTP Handler ─────────────────────────────────────────────────────────────────
 
-def _make_routes(state: TrainState):
+def _make_routes(state: TrainState, cfg: dict, broadcaster):
     """Create route handlers bound to the given TrainState instance."""
 
     def _root(handler):
@@ -854,7 +1160,7 @@ def _make_routes(state: TrainState):
                 return json.dumps({"status": "error",
                                    "message": "invalid JSON"}), \
                        "application/json; charset=utf-8"
-        result = handle_action(state, body)
+        result = handle_action(state, body, cfg, broadcaster)
         return json.dumps(result, ensure_ascii=False), \
                "application/json; charset=utf-8"
 
@@ -949,7 +1255,7 @@ def main():
 
     # Build handler class dynamically
     TrainHandler = type("TrainHandler", (SSEHandler,), {
-        "routes": _make_routes(state),
+        "routes": _make_routes(state, cfg, broadcaster),
         "sse_paths": {"/events"},
     })
 
