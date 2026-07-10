@@ -205,6 +205,16 @@ _CSS = """
 """
 
 
+def _preset_options_html(state: FuseState) -> str:
+    """Build <option> tags for the preset selector dropdown."""
+    presets = _load_all_presets()
+    opts = ""
+    for n in sorted(presets.keys()):
+        sel = ' selected' if n == state.preset_name else ''
+        opts += f'<option value="{n}"{sel}>{n}</option>'
+    return opts
+
+
 def build_fuse_page(state: FuseState) -> str:
     with state._lock:
         fuse_plys = list(state.fuse_plys)
@@ -304,6 +314,14 @@ def build_fuse_page(state: FuseState) -> str:
       <p style="color:#7a7368;font-size:11px;margin:4px 0">
         点击选择（首个 = main，全部点保留），再次点击取消，顺序决定 combine 名称。
       </p>
+      <label style="font-size:12px;color:#5b5a4e;margin-top:4px;display:block">
+        Preset:
+        <select id="fuse-preset" style="margin:4px 0;padding:2px 6px;
+               border:1px solid #d9cfb8;border-radius:3px;font-size:12px;
+               background:#fffdf7">
+          {_preset_options_html(state)}
+        </select>
+      </label>
       <button class="fuse" {fuse_disabled} onclick="doFuse()">fuse + clip 选中</button>
     </div>
 
@@ -428,10 +446,11 @@ def build_fuse_page(state: FuseState) -> str:
     async function doFuse() {{
       if (!fuseOrder.length) {{ alert('请至少选择一个 PLY'); return; }}
       let ply_indices = fuseOrder.map(f => f.idx);
+      let preset = document.getElementById('fuse-preset').value;
       let r = await fetch('/fuse', {{
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
-        body: JSON.stringify({{ply_indices: ply_indices}})
+        body: JSON.stringify({{ply_indices: ply_indices, preset_name: preset}})
       }});
       let d = await r.json();
       if (d.status === 'ok') location.reload();
@@ -938,7 +957,7 @@ def _build_presets_page() -> str:
 </html>"""
 
 
-def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
+def _make_fuse_routes(state: FuseState, cfg: dict,
                       force: bool, broadcaster: SSEBroadcaster,
                       logger: FileLogger):
     def _root(handler):
@@ -958,6 +977,12 @@ def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
         ply_indices = body.get("ply_indices", [])
         if not ply_indices:
             return json.dumps({"status": "error", "message": "未选择 PLY"}), \
+                   "application/json; charset=utf-8"
+        preset_name = body.get("preset_name", state.preset_name)
+        preset = _load_all_presets().get(preset_name)
+        if not preset:
+            return json.dumps({"status": "error",
+                               "message": f"preset not found: {preset_name}"}), \
                    "application/json; charset=utf-8"
         with state._lock:
             state.active_tasks.add("fuse")
@@ -1120,7 +1145,7 @@ def main():
     if "preset" not in cfg:
         print("ERROR: Missing 'preset' in config"); sys.exit(1)
 
-    preset = load_preset(cfg["preset"])
+    load_preset(cfg["preset"])  # validate preset exists at startup
     poll_interval = cfg.get("poll_interval", 5)
     jsons_dir = cfg.get("jsons_path")
 
@@ -1137,7 +1162,7 @@ def main():
 
     # Build handler class dynamically
     FuseHandler = type("FuseHandler", (SSEHandler,), {
-        "routes": _make_fuse_routes(state, cfg, preset,
+        "routes": _make_fuse_routes(state, cfg,
                                     args_p.force, broadcaster, logger),
         "sse_paths": {"/events"},
     })
