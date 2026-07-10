@@ -1,0 +1,250 @@
+# v8 Daemon — 开发交接文档
+
+> 写给接手 v8 开发的后来者。读完本文 + 代码全局搜索即可上手。
+
+---
+
+## 1. 你在看什么
+
+两个长期运行的后台进程，替代 v7 的一次性 CLI 训练管线：
+
+| 进程 | 文件 | 端口 | 职责 |
+|------|------|:---:|------|
+| Train Daemon | `tills/server/train_daemon.py` | 8080 | 轮询 raw_images → 分发训练 → 回收 PLY |
+| Fuse Server | `tills/server/fuse_server.py` | 8081 | 浏览 PLY → fuse+clip → Playwright 渲染 |
+
+两者通过**文件系统**（PLY 是否存在）解耦，互不依赖。
+
+---
+
+## 2. 启动方式
+
+```powershell
+# 终端 1
+python -m tills.server.train_daemon --config CameraData/05/pipeline.json
+
+# 终端 2
+python -m tills.server.fuse_server --config CameraData/05/pipeline.json
+```
+
+浏览器：
+- `http://localhost:8080` — Train 面板
+- `http://localhost:8081` — Fuse 面板
+- `http://localhost:8081/presets` — Preset 编辑器
+
+---
+
+## 3. 文件地图
+
+```
+tills/server/
+├── _server.py            # 共享基础设施：FileLogger, SSEBroadcaster, SSEHandler,
+│                         #   ThreadingHTTPServer, create_server, run_server
+├── train_daemon.py       # Train 守护进程（~900 行）
+└── fuse_server.py        # Fuse 服务（~1300 行，含 Preset 编辑器）
+
+tills/
+├── _shared.py            # Playwright 函数 + load_preset + 工具函数（不动）
+├── _distributed.py       # WorkerNode, SSH/SCP, cleanup_frame, kill_worker_process
+├── run_pipeline_v6.py    # v6 CLI 管线（不动，被 fuse_server 的 render 间接复用）
+└── run_pipeline_v7.py    # v7 CLI 管线（不动）
+
+Docs/
+├── v8-daemon-design.md   # 架构设计文档（grill 阶段产出）
+├── v8-daemon-usage.md    # 使用指南（状态机、FAQ）
+└── v8-handoff.md         # 本文档
+```
+
+---
+
+## 4. 架构核心概念
+
+### 4.1 共享基础设施 (`_server.py`)
+
+`FileLogger`：线程安全的文件日志器。构造函数 `FileLogger(proj_dir, prefix="daemon")` 自动创建 `CameraData/<proj>/logs/<prefix>-<ts>/` 目录。`write(name, line)` 按 name 分流到不同 `.log` 文件。两个 daemon 共用。
+
+`SSEBroadcaster`：发布-订阅模式。`broadcast(event, data)` 推送给所有订阅者。train daemon 用它推状态和日志到浏览器。
+
+`SSEHandler`：HTTP 请求处理基类。子类设置 `routes` (dict of path → callable) 和 `sse_paths` (set of paths)。`ThreadingHTTPServer` 让每个请求独立线程——没有这个 SSE 长连接会阻塞普通请求。
+
+**重要**：`_server.py` 被两个 daemon 共同 import。修改前确认两边行为不受影响。`Cache-Control: no-cache` 已全局开启——服务端渲染 HTML 不加这个浏览器会缓存旧 JS → revert 后看起来"没修好"。
+
+### 4.2 Train Daemon 核心流程
+
+```
+main()
+  ├─ 加载 pipeline.json + workers.json
+  ├─ 创建 FileLogger + TrainState + SSEBroadcaster
+  ├─ 构建 TrainHandler（路由: /, /action, /api/status）
+  ├─ 启动 main_loop() → 后台线程
+  └─ 启动 HTTP server → 阻塞
+
+main_loop() 每 poll_interval 秒循环:
+  Phase 1: 扫描 raw_images/ → 解析帧目录 → 更新 TrainState
+  Phase 2: 分发 ready 帧 → round-robin 到在线 worker → ssh_run_async 启动训练
+          启动时 spawn stdout reader daemon 线程（不阻塞主循环）
+  Phase 3: 监控 running_processes → poll() + read_worker_status()
+           进程退出 → 回收 PLY → 标记 done/failed
+  Phase 4: emit_status() → SSE 推送到浏览器
+```
+
+**帧状态机**：`new → checking → ready → copying → training → done | failed`
+详见 `Docs/v8-daemon-usage.md` §3。
+
+**跨轮次双采样**：帧就绪检测不用 `time.sleep()`。每轮扫描取快照 → 存到 `_prev_snapshot` → 下一轮对比。poll interval 自然提供稳定窗口。
+
+### 4.3 Fuse Server 核心流程
+
+```
+main()
+  ├─ 加载 pipeline.json → load_preset 验证
+  ├─ 创建 FileLogger + FuseState + SSEBroadcaster
+  ├─ 构建 FuseHandler（路由: /, /fuse, /render, /presets, /presets/data, /presets/save, /presets/delete, /presets/create）
+  ├─ 启动 poll_loop() → 后台线程
+  └─ 启动 HTTP server → 阻塞
+
+poll_loop() 每 poll_interval 秒循环:
+  scan_all() → 扫描三个路径:
+    ├─ CameraData/<proj>/*.ply（过滤 combine）→ fuse_plys
+    ├─ CameraData/<proj>-clip/*.ply → render_plys
+    ├─ cfg["jsons_path"]/*.json → json_files
+    └─ check_dev_server() → npm_ok
+  有变化 → SSE push "plys_updated" → 浏览器 reload
+```
+
+**页面结构**：三列 flex 布局（Fuse PLYs 多选 | Render PLYs 单选 | JSONs 单选）。点击 fuse 行 → 追加到顺序选择（首个=main PLY）。预览条实时显示 combine 文件名。
+
+**Preset 管理**：Modal（主页面点 `[Presets]`）或独立页面 `/presets`。参数编辑区从 `tills_ply/presets.json` 动态读写。新建从 `CameraData/_template/presets.json` 复制模板。保存用原子 write-tmp-rename。
+
+**Render**：所有 Playwright 操作在一个 `asyncio.run()` 内完成——`ensure_browser → upload_ply → upload_json_file → render_video`。不能分多次 `asyncio.run()`，因为 Playwright page 对象绑定到创建它的事件循环。
+
+---
+
+## 5. 关键设计决策
+
+| 决策 | 选择 | 原因 |
+|------|------|------|
+| 两个独立进程 | 是 | 解耦、独立重启、各自无状态 |
+| 进程间通信 | 文件系统（PLY 存在性） | 零依赖、天然持久 |
+| HTTP 框架 | 自建 `_server.py` (~250行) | 零依赖、够用 |
+| Web 实时推送 | SSE（Server-Sent Events） | stdlib 可实现、浏览器自动重连 |
+| 帧就绪检测 | 跨轮次双采样 | 不用 sleep，poll interval 自然提供稳定窗口 |
+| 进程终止 | `taskkill /f /t /pid` | `/t` 树杀——必须杀子进程（batch_run → run_LiteGS_pipeline → example_train） |
+| Daemon 状态持久化 | 无状态 | PLY 存在性即是天然状态 |
+| 训练 stdout 读取 | 每进程独立 daemon 线程 | 不阻塞主循环，所有 worker 输出实时交错 |
+| Render asyncio | 所有操作一个 `asyncio.run()` | Playwright page 绑定事件循环 |
+| Service Worker | network-first | 见 `src/sw.ts` |
+| v6/v7 改动 | 零 | 向后兼容 |
+
+---
+
+## 6. 开发注意事项（血的教训）
+
+### 6.1 修改 JS 必须小心
+
+页面是服务端渲染（Python f-string 拼 HTML + JS）。JS 有任何语法或运行时错误 → **整个 `<script>` 块停止执行** → 所有按钮、事件处理器失效 → 页面彻底无法交互。
+
+**规则**：
+- 一次只改一个区域（modal / /presets 页 / 主页面逻辑）
+- 改完后验证 brace 平衡：`python -c "统计生成的 HTML 中 { 和 } 数量"`
+- `Cache-Control: no-cache` 确保浏览器不用旧缓存（已在 `_server.py` 全局开启）
+
+### 6.2 f-string 中的 JS
+
+JS 的 `{` `}` 在 Python f-string 中必须写成 `{{` `}}`。但 Python 的 `{var}` 插值不需要转义。两者混在同一段 HTML/JS 字符串里极其容易搞混。建议改 JS 时先用 Python 检查生成的 HTML。
+
+### 6.3 asyncio.run() 只能用一次
+
+```python
+# ❌ 错误——三个独立事件循环
+pw, browser, page = asyncio.run(ensure_browser())
+asyncio.run(upload_ply(page, ply_path))       # page 绑定的是上一个循环！
+asyncio.run(render_video(page, ...))
+
+# ✅ 正确——一个循环内完成全部
+async def _do():
+    pw, browser, page = await ensure_browser()
+    await upload_ply(page, ply_path)
+    await render_video(page, ...)
+asyncio.run(_do())
+```
+
+### 6.4 taskkill /t 是必须的
+
+`os.kill(pid)` 只杀单个进程。训练链是 `batch_run.py → run_LiteGS_pipeline.py → example_train.py`。不用 `/t` 树杀的话子进程变孤儿继续跑 GPU。`kill_worker_process` 已统一用 `taskkill /f /t /pid`。
+
+### 6.5 `_distributed.py` 只加不改签名
+
+`tills/_distributed.py` 被 v7 和 v8 共用。新增的函数（`check_frame_ready`, `kill_worker_process`, `cleanup_frame`, `scp_send_multi`, `scp_recv_multi`）只追加，不改已有函数签名。v7 继续正常工作。
+
+---
+
+## 7. 常用调试手段
+
+```powershell
+# 检查生成的 HTML/JS 是否正常
+python -c "
+from tills.server.fuse_server import build_fuse_page
+import tills.server.fuse_server as fs
+state = fs.FuseState(project='05', preset_name='test', jsons_dir=None)
+page = build_fuse_page(state)
+import re
+scripts = re.findall(r'<script>(.*?)</script>', page, re.DOTALL)
+for i, s in enumerate(scripts):
+    opens = s.count('{'); closes = s.count('}')
+    print(f'Script {i}: {{ = {opens}, }} = {closes}')
+    if opens != closes: print('  BRACE MISMATCH!')
+"
+
+# 查看日志
+cat CameraData/05/logs/daemon-<ts>/daemon.log
+cat CameraData/05/logs/daemon-<ts>/host.log
+cat CameraData/05/logs/fuse-<ts>/fuse.log
+
+# 手动跑 batch_run.py 诊断训练问题
+cd E:\work\26.7_SKNJ\LiteGSWin
+& ".venv\Scripts\python.exe" batch_run.py --sub_dir 0630 --frames 120-2026-06-30-120849 --worker-status results/0630/_worker_status.json
+
+# 测试 preset API
+curl http://localhost:8081/presets/data
+curl -X POST http://localhost:8081/presets/save -H "Content-Type: application/json" -d '{"name":"test","params":{...}}'
+```
+
+---
+
+## 8. Pipeline.json 字段速查
+
+```jsonc
+{
+  "project": "05",                              // 项目名 → CameraData/<project>/
+  "preset": "通用合并方案",                       // 默认 preset（fuse_server 启动时验证）
+  "raw_images_path": "E:/...",                  // 帧图片来源（默认 CameraData/<proj>/raw_images/）
+  "img_num": 120,                               // 每帧期望图片数（默认从目录名前缀解析）
+  "jsons_path": "E:/...",                       // 相机 JSON 目录（render 用）
+  "video_output_path": "E:/...",                // MP4 输出目录（默认 CameraData/<proj>/renders/）
+  "poll_interval": 5,                           // 扫描间隔秒数
+  "fps": 25,
+  "litegs_path": "E:/.../LiteGSWin",
+  "distributed": {
+    "enabled": true,
+    "workers_config": "workers.json",
+    "training": { "iterations": 25000 }
+  }
+}
+```
+
+---
+
+## 9. Suggested Skills
+
+接手后如需修改或扩展，建议使用以下 skill：
+
+- `superpowers/skills/writing-plans` — 写开发计划（bite-sized tasks）
+- `engineering/grill-with-docs` — 需求讨论和设计确认
+- `codegen` — 遵循项目约定的代码生成
+
+已有参考文档：
+- `Docs/v8-daemon-design.md` — 架构设计
+- `Docs/v8-daemon-usage.md` — 使用指南和 FAQ
+- `docs/superpowers/plans/2026-07-09-v8-daemon.md` — 原始开发计划
+- `docs/superpowers/plans/2026-07-10-v8-preset-editor.md` — Preset 编辑器开发计划
