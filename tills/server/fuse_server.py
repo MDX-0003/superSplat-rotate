@@ -496,14 +496,16 @@ def build_fuse_page(state: FuseState) -> str:
 
     // ── preset modal ──
     async function openPresets() {{
-      let r = await fetch('/presets/data');
-      let all = await r.json();
-      let sel = document.getElementById('pm-select');
-      sel.innerHTML = '<option value="">— 选择 Preset —</option>';
-      for (let n of Object.keys(all.presets).sort()) {{
-        sel.innerHTML += '<option value="' + n + '">' + n + '</option>';
-      }}
       document.getElementById('preset-modal').classList.add('open');
+      try {{
+        let r = await fetch('/presets/data');
+        let all = await r.json();
+        let sel = document.getElementById('pm-select');
+        sel.innerHTML = '<option value="">— 选择 Preset —</option>';
+        for (let n of Object.keys(all.presets).sort()) {{
+          sel.innerHTML += '<option value="' + n + '">' + n + '</option>';
+        }}
+      }} catch(e) {{}}
     }}
     function closePresets() {{
       document.getElementById('preset-modal').classList.remove('open');
