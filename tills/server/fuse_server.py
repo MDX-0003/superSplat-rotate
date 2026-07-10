@@ -201,6 +201,27 @@ _CSS = """
          font-size:11px;font-weight:600;margin-left:4px}
   .badge.main{background:#5b7c5a;color:#fff}
   .badge.pos{background:#d9cfb8;color:#5b5a4e}
+  .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+                  background:rgba(0,0,0,.45);z-index:1000;
+                  justify-content:center;align-items:flex-start;padding-top:40px}
+  .modal-overlay.open{display:flex}
+  .modal-card{background:#f5f0e8;border-radius:8px;padding:20px 24px;
+               max-width:650px;width:95%;max-height:85vh;overflow-y:auto;
+               box-shadow:0 4px 20px rgba(0,0,0,.3)}
+  .modal-card h2{font-size:16px;color:#5b7c5a;margin-bottom:10px}
+  .modal-card .close{float:right;background:none;border:none;font-size:20px;
+                      cursor:pointer;color:#7a7368;padding:0 4px}
+  .modal-card .ms{{background:#fffdf7;border:1px solid #d9cfb8;
+                   border-radius:4px;padding:10px 14px;margin-bottom:10px}}
+  .modal-card .ms h3{{color:#5b7c5a;font-size:13px;margin-bottom:6px;
+                      padding-bottom:3px;border-bottom:1px solid #d9cfb8}}
+  .modal-card .fd{{display:flex;align-items:center;gap:6px;margin-bottom:5px;
+                   flex-wrap:wrap}}
+  .modal-card .fd label{{font-size:12px;color:#5b5a4e;min-width:155px}}
+  .modal-card .fd input[type="number"]{{width:80px}}
+  .modal-card .fd input[type="text"]{{width:130px}}
+  .modal-card .fd select{{padding:2px 4px;border:1px solid #d9cfb8;
+                           border-radius:3px;font-size:12px;background:#fffdf7}}
 </style>
 """
 
@@ -293,6 +314,8 @@ def build_fuse_page(state: FuseState) -> str:
     &nbsp;|&nbsp; Fuse PLY: {len(fuse_plys)} 个
     &nbsp;|&nbsp; Render PLY: {len(render_plys)} 个
     &nbsp;|&nbsp; JSON: {len(json_files)} 个
+    &nbsp;|&nbsp; <a href="javascript:openPresets()"
+         style="color:#5b7c5a;font-weight:600;text-decoration:none">[Presets]</a>
   </div>
 
   <div class="grid">
@@ -471,7 +494,173 @@ def build_fuse_page(state: FuseState) -> str:
       if (d.status === 'ok') location.reload();
       else alert(d.message || JSON.stringify(d));
     }}
+
+    // ── preset modal ──
+    async function openPresets() {{
+      let r = await fetch('/presets/data');
+      let all = await r.json();
+      let sel = document.getElementById('pm-select');
+      sel.innerHTML = '<option value="">— 选择 Preset —</option>';
+      for (let n of Object.keys(all.presets).sort()) {{
+        sel.innerHTML += '<option value="' + n + '">' + n + '</option>';
+      }}
+      document.getElementById('preset-modal').classList.add('open');
+    }}
+    function closePresets() {{
+      document.getElementById('preset-modal').classList.remove('open');
+    }}
+    let pmName = '';
+    async function pmLoad() {{
+      pmName = document.getElementById('pm-select').value;
+      let editor = document.getElementById('pm-editor');
+      if (!pmName) {{ editor.style.display = 'none'; return; }}
+      let r = await fetch('/presets/data');
+      let all = await r.json();
+      let p = all.presets[pmName];
+      if (!p) return;
+      editor.style.display = 'block';
+      pmSet('pm-f-max_index', p.max_index);
+      pmSet('pm-f-radius_scale', p.fuse?.radius_scale);
+      pmSet('pm-f-height_up', p.fuse?.height_up);
+      pmSet('pm-f-height_down', p.fuse?.height_down);
+      pmSet('pm-f-bias', p.fuse?.bias, true);
+      pmSet('pm-f-bias_margin', p.fuse?.bias_margin);
+      pmSet('pm-f-bias_radius_percentile', p.fuse?.bias_radius_percentile);
+      pmSet('pm-c-clip_percent', p.clip?.clip_percent);
+      pmSet('pm-c-denoise', p.clip?.denoise, true);
+      pmSet('pm-c-denoise_method', p.clip?.denoise_method, false, true);
+      pmSet('pm-c-denoise_grid_cell', p.clip?.denoise_grid_cell);
+      pmSet('pm-c-denoise_min_points', p.clip?.denoise_min_points);
+      pmSet('pm-c-denoise_voxel_size', p.clip?.denoise_voxel_size);
+      pmSet('pm-c-height_up', p.clip?.height_up);
+      pmSet('pm-c-height_down', p.clip?.height_down);
+      pmSet('pm-c-radius_scale', p.clip?.radius_scale);
+      pmSet('pm-c-ring_delete', p.clip?.ring_delete, true);
+      pmSet('pm-c-ring_outer_delta', p.clip?.ring_outer_delta);
+      pmSet('pm-c-ring_inner_delta', p.clip?.ring_inner_delta);
+      pmSet('pm-c-ring_height_up', p.clip?.ring_height_up);
+      pmSet('pm-c-ring_height_down', p.clip?.ring_height_down);
+      pmSet('pm-i-total', p.interpolate?.total);
+      pmSet('pm-i-anchor_camera', p.interpolate?.anchor_camera, false, true);
+      pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
+      document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
+      document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
+    }}
+    function pmSet(id, val, isCb, isTxt) {{
+      let el = document.getElementById(id);
+      if (!el) return;
+      if (isCb) {{ el.checked = !!val; }}
+      else if (isTxt) {{ if (val != null) el.value = val; }}
+      else {{ if (val != null) el.value = val; }}
+    }}
+    function pF(id) {{ let v=parseFloat(document.getElementById(id).value); return isNaN(v)?null:v; }}
+    function pI(id) {{ let v=parseInt(document.getElementById(id).value); return isNaN(v)?null:v; }}
+    async function pmSave() {{
+      if (!pmName) return;
+      let params = {{max_index: pI('pm-f-max_index'), fuse:{{}}, clip:{{}}, interpolate:{{}}}};
+      params.fuse.radius_scale=pF('pm-f-radius_scale');
+      params.fuse.height_up=pF('pm-f-height_up');
+      params.fuse.height_down=pF('pm-f-height_down');
+      params.fuse.bias=document.getElementById('pm-f-bias').checked;
+      params.fuse.bias_margin=pF('pm-f-bias_margin');
+      params.fuse.bias_radius_percentile=pI('pm-f-bias_radius_percentile');
+      params.clip.clip_percent=pF('pm-c-clip_percent');
+      params.clip.denoise=document.getElementById('pm-c-denoise').checked;
+      params.clip.denoise_method=document.getElementById('pm-c-denoise_method').value;
+      params.clip.denoise_grid_cell=pF('pm-c-denoise_grid_cell');
+      params.clip.denoise_min_points=pI('pm-c-denoise_min_points');
+      params.clip.denoise_voxel_size=pF('pm-c-denoise_voxel_size');
+      params.clip.height_up=pF('pm-c-height_up');
+      params.clip.height_down=pF('pm-c-height_down');
+      params.clip.radius_scale=pF('pm-c-radius_scale');
+      params.clip.ring_delete=document.getElementById('pm-c-ring_delete').checked;
+      params.clip.ring_outer_delta=pF('pm-c-ring_outer_delta');
+      params.clip.ring_inner_delta=pF('pm-c-ring_inner_delta');
+      params.clip.ring_height_up=pF('pm-c-ring_height_up');
+      params.clip.ring_height_down=pF('pm-c-ring_height_down');
+      params.interpolate.total=pI('pm-i-total');
+      params.interpolate.anchor_camera=document.getElementById('pm-i-anchor_camera').value;
+      params.interpolate.radius_scale=pF('pm-i-radius_scale');
+      let r=await fetch('/presets/save',{{method:'POST',
+       headers:{{'Content-Type':'application/json'}},
+       body:JSON.stringify({{name:pmName,params:params}})}});
+      let d=await r.json();
+      if(d.status==='ok'){{alert('已保存');closePresets();location.reload();}}
+      else alert('ERROR: '+d.message);
+    }}
+    async function pmDelete() {{
+      if(!pmName||!confirm('确认删除 preset: '+pmName+'？'))return;
+      let r=await fetch('/presets/delete',{{method:'POST',
+       headers:{{'Content-Type':'application/json'}},
+       body:JSON.stringify({{name:pmName}})}});
+      let d=await r.json();
+      if(d.status==='ok'){{closePresets();location.reload();}}
+      else alert('ERROR: '+d.message);
+    }}
+    async function pmCreate() {{
+      let name=prompt('新 Preset 名称:');
+      if(!name||!name.trim())return;
+      let r=await fetch('/presets/create',{{method:'POST',
+       headers:{{'Content-Type':'application/json'}},
+       body:JSON.stringify({{name:name.trim()}})}});
+      let d=await r.json();
+      if(d.status==='ok'){{closePresets();location.reload();}}
+      else alert('ERROR: '+d.message);
+    }}
   </script>
+
+  <!-- Preset Editor Modal -->
+  <div class="modal-overlay" id="preset-modal" onclick="if(event.target===this)closePresets()">
+    <div class="modal-card">
+      <button class="close" onclick="closePresets()">&times;</button>
+      <h2>Preset 编辑器</h2>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <select id="pm-select" onchange="pmLoad()"
+                style="padding:4px 8px;border:1px solid #d9cfb8;border-radius:3px;
+                       font-size:13px;background:#fffdf7">
+          <option value="">— 选择 Preset —</option>
+        </select>
+        <button onclick="pmCreate()" style="font-size:12px;padding:4px 10px">+ 新建</button>
+      </div>
+      <div id="pm-editor" style="display:none">
+        <div class="ms"><h3>fuse 参数</h3>
+          <div class="fd"><label>max_index</label><input type="number" id="pm-f-max_index" step="1"></div>
+          <div class="fd"><label>radius_scale</label><input type="number" id="pm-f-radius_scale" step="0.01"></div>
+          <div class="fd"><label>height_up (m)</label><input type="number" id="pm-f-height_up" step="0.1"></div>
+          <div class="fd"><label>height_down (m)</label><input type="number" id="pm-f-height_down" step="0.1"></div>
+          <div class="fd"><label>bias</label><input type="checkbox" id="pm-f-bias"
+            onchange="let b=this.checked;document.getElementById('pm-f-bias_margin').disabled=!b;document.getElementById('pm-f-bias_radius_percentile').disabled=!b"></div>
+          <div class="fd"><label>bias_margin (m)</label><input type="number" id="pm-f-bias_margin" step="0.01"></div>
+          <div class="fd"><label>bias_radius_percentile</label><input type="number" id="pm-f-bias_radius_percentile" step="1"></div>
+        </div>
+        <div class="ms"><h3>clip 参数</h3>
+          <div class="fd"><label>clip_percent</label><input type="number" id="pm-c-clip_percent" step="0.01"></div>
+          <div class="fd"><label>denoise</label><input type="checkbox" id="pm-c-denoise"></div>
+          <div class="fd"><label>denoise_method</label><input type="text" id="pm-c-denoise_method" placeholder="region-grow"></div>
+          <div class="fd"><label>denoise_grid_cell (m)</label><input type="number" id="pm-c-denoise_grid_cell" step="0.01"></div>
+          <div class="fd"><label>denoise_min_points</label><input type="number" id="pm-c-denoise_min_points" step="1"></div>
+          <div class="fd"><label>denoise_voxel_size (m)</label><input type="number" id="pm-c-denoise_voxel_size" step="0.01"></div>
+          <div class="fd"><label>height_up (m)</label><input type="number" id="pm-c-height_up" step="0.1"></div>
+          <div class="fd"><label>height_down (m)</label><input type="number" id="pm-c-height_down" step="0.1"></div>
+          <div class="fd"><label>radius_scale</label><input type="number" id="pm-c-radius_scale" step="0.01"></div>
+          <div class="fd"><label>ring_delete</label><input type="checkbox" id="pm-c-ring_delete"></div>
+          <div class="fd"><label>ring_outer_delta (m)</label><input type="number" id="pm-c-ring_outer_delta" step="0.01"></div>
+          <div class="fd"><label>ring_inner_delta (m)</label><input type="number" id="pm-c-ring_inner_delta" step="0.01"></div>
+          <div class="fd"><label>ring_height_up (m)</label><input type="number" id="pm-c-ring_height_up" step="0.1"></div>
+          <div class="fd"><label>ring_height_down (m)</label><input type="number" id="pm-c-ring_height_down" step="0.1"></div>
+        </div>
+        <div class="ms"><h3>interpolate 参数</h3>
+          <div class="fd"><label>total</label><input type="number" id="pm-i-total" step="1"></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006"></div>
+          <div class="fd"><label>radius_scale</label><input type="number" id="pm-i-radius_scale" step="0.01"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button onclick="pmSave()" style="font-size:12px;padding:4px 10px">保存</button>
+          <button onclick="pmDelete()" class="danger" style="font-size:12px;padding:4px 10px;background:#c0392b;color:#fff;border:none;border-radius:3px;cursor:pointer">删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>"""
 
