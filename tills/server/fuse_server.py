@@ -680,6 +680,12 @@ def _log_render(line: str, state: FuseState, broadcaster: SSEBroadcaster,
 
 # ── HTTP Handler ─────────────────────────────────────────────────────────────────
 
+def _build_presets_page() -> str:
+    """GET /presets — stub (implemented in Phase 2.1)."""
+    return """<!DOCTYPE html><html><body><h1>Presets</h1>
+    <p>Editor coming soon. <a href="/">Back</a></p></body></html>"""
+
+
 def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
                       force: bool, broadcaster: SSEBroadcaster,
                       logger: FileLogger):
@@ -743,7 +749,82 @@ def _make_fuse_routes(state: FuseState, cfg: dict, preset: dict,
         return json.dumps({"status": "ok", "message": "render started"}), \
                "application/json; charset=utf-8"
 
-    return {"/": _root, "/fuse": _fuse, "/render": _render}
+    # ── preset CRUD ──
+
+    def _presets_page(handler):
+        return _build_presets_page(), "text/html; charset=utf-8"
+
+    def _presets_data(handler):
+        presets = _load_all_presets()
+        return json.dumps({"presets": presets}, ensure_ascii=False), \
+               "application/json; charset=utf-8"
+
+    def _presets_save(handler, body):
+        if isinstance(body, str):
+            body = json.loads(body)
+        name = body.get("name", "")
+        params = body.get("params", {})
+        presets = _load_all_presets()
+        if name not in presets:
+            return json.dumps({"status": "error",
+                               "message": f"preset not found: {name}"}), \
+                   "application/json; charset=utf-8"
+        # Merge only known sections
+        p = presets[name]
+        if "max_index" in params:
+            p["max_index"] = params["max_index"]
+        for section in ("fuse", "clip", "interpolate"):
+            if section in params and isinstance(params[section], dict):
+                p.setdefault(section, {})
+                p[section].update(params[section])
+        _save_all_presets(presets)
+        logger.write("presets", f"saved preset '{name}'")
+        return json.dumps({"status": "ok", "message": f"preset '{name}' saved"}), \
+               "application/json; charset=utf-8"
+
+    def _presets_delete(handler, body):
+        if isinstance(body, str):
+            body = json.loads(body)
+        name = body.get("name", "")
+        presets = _load_all_presets()
+        if name not in presets:
+            return json.dumps({"status": "error",
+                               "message": f"preset not found: {name}"}), \
+                   "application/json; charset=utf-8"
+        del presets[name]
+        _save_all_presets(presets)
+        logger.write("presets", f"deleted preset '{name}'")
+        return json.dumps({"status": "ok", "message": f"preset '{name}' deleted"}), \
+               "application/json; charset=utf-8"
+
+    def _presets_create(handler, body):
+        if isinstance(body, str):
+            body = json.loads(body)
+        name = body.get("name", "").strip()
+        if not name:
+            return json.dumps({"status": "error", "message": "name is required"}), \
+                   "application/json; charset=utf-8"
+        presets = _load_all_presets()
+        if name in presets:
+            return json.dumps({"status": "error",
+                               "message": f"preset '{name}' already exists"}), \
+                   "application/json; charset=utf-8"
+        import copy
+        template = _load_template_preset()
+        if not template:
+            return json.dumps({"status": "error",
+                               "message": "template not found in _template/presets.json"}), \
+                   "application/json; charset=utf-8"
+        presets[name] = copy.deepcopy(template)
+        _save_all_presets(presets)
+        logger.write("presets", f"created preset '{name}' from template")
+        return json.dumps({"status": "ok", "message": f"preset '{name}' created"}), \
+               "application/json; charset=utf-8"
+
+    return {"/": _root, "/fuse": _fuse, "/render": _render,
+            "/presets": _presets_page, "/presets/data": _presets_data,
+            "/presets/save": _presets_save, "/presets/delete": _presets_delete,
+            "/presets/create": _presets_create}
 
 
 # ── Polling loop ─────────────────────────────────────────────────────────────────
