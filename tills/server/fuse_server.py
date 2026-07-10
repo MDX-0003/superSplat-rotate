@@ -206,7 +206,7 @@ _CSS = """
                   justify-content:center;align-items:flex-start;padding-top:40px}
   .modal-overlay.open{display:flex}
   .modal-card{background:#f5f0e8;border-radius:8px;padding:24px 28px;
-               max-width:720px;width:95%;max-height:85vh;overflow-y:auto;
+               max-width:980px;width:95%;max-height:85vh;overflow-y:auto;
                box-shadow:0 4px 20px rgba(0,0,0,.3)}
   .modal-card h2{font-size:20px;color:#5b7c5a;margin-bottom:12px}
   .modal-card .close{float:right;background:none;border:none;font-size:20px;
@@ -215,12 +215,13 @@ _CSS = """
                    border-radius:4px;padding:14px 18px;margin-bottom:14px}
   .modal-card .ms h3{color:#5b7c5a;font-size:16px;margin-bottom:8px;
                       padding-bottom:4px;border-bottom:1px solid #d9cfb8}
-  .modal-card .fd{display:flex;align-items:center;gap:10px;margin-bottom:8px;
+  .modal-card .fd{display:flex;align-items:center;gap:8px;margin-bottom:8px;
                    flex-wrap:wrap;line-height:1.6}
-  .modal-card .fd label{font-size:15px;color:#5b5a4e;flex:0 0 215px;text-align:right}
-  .modal-card .fd input[type="text"]{font-size:14px;padding:3px 5px}
+  .modal-card .fd label{font-size:13px;color:#5b5a4e;flex:0 0 170px;text-align:right}
+  .modal-card .fd input[type="text"]{font-size:13px;padding:3px 5px}
   .modal-card .fd select{padding:3px 5px;border:1px solid #d9cfb8;
-                           border-radius:3px;font-size:14px;background:#fffdf7}
+                           border-radius:3px;font-size:13px;background:#fffdf7}
+  .tip{font-size:11px;color:#aaa295;flex:1;min-width:120px;line-height:1.4}
 </style>
 """
 
@@ -639,41 +640,41 @@ def build_fuse_page(state: FuseState) -> str:
       </div>
       <div id="pm-editor" style="display:none">
         <div class="ms"><h3>fuse 参数</h3>
-          <div class="fd"><label title="拟合圆所用的相机范围 id=0..max_index（从0开始,包含max_index）">max_index</label><input type="text" id="pm-f-max_index" step="1" size="4"></div>
-          <div class="fd"><label title="对拟合圆半径的缩放系数。<1 收紧圆柱,只保留更靠近圆心的点">radius_scale</label><input type="text" id="pm-f-radius_scale" step="0.01" size="5"></div>
-          <div class="fd"><label title="圆柱沿法向量上方保留高度(米)。人物身高约2m,建议2~3">height_up (m)</label><input type="text" id="pm-f-height_up" step="0.1" size="4"></div>
-          <div class="fd"><label title="地面侧搜索范围(米)。典型值 0.3~0.5，越小越保守">height_down (m)</label><input type="text" id="pm-f-height_down" step="0.1" size="4"></div>
-          <div class="fd"><label title="启用人物重叠分离。检测密度峰值,对重叠非main PLY施加XY平移">bias</label><input type="checkbox" id="pm-f-bias"
-            onchange="let b=this.checked;document.getElementById('pm-f-bias_margin').disabled=!b;document.getElementById('pm-f-bias_radius_percentile').disabled=!b"></div>
-          <div class="fd"><label title="分离后人物核心间的额外安全距离(米)。越大越暴力,越小越保守">bias_margin (m)</label><input type="text" id="pm-f-bias_margin" step="0.01" size="5"></div>
-          <div class="fd"><label title="核心半径百分位数(0~100)。值越小核心越紧">bias_radius_percentile</label><input type="text" id="pm-f-bias_radius_percentile" step="1" size="4"></div>
+          <div class="fd"><label>max_index</label><input type="text" id="pm-f-max_index" step="1" size="4"><span class="tip">拟合圆相机范围 id=0..max_index（含max_index）</span></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-f-radius_scale" step="0.01" size="5"><span class="tip"><1 收紧圆柱,只保留靠近圆心点</span></div>
+          <div class="fd"><label>height_up (m)</label><input type="text" id="pm-f-height_up" step="0.1" size="4"><span class="tip">圆柱法向量上方保留高度,人物约2m</span></div>
+          <div class="fd"><label>height_down (m)</label><input type="text" id="pm-f-height_down" step="0.1" size="4"><span class="tip">地面侧搜索范围。典型值 0.3~0.5</span></div>
+          <div class="fd"><label>bias</label><input type="checkbox" id="pm-f-bias"
+            onchange="let b=this.checked;document.getElementById('pm-f-bias_margin').disabled=!b;document.getElementById('pm-f-bias_radius_percentile').disabled=!b"><span class="tip">启用人物重叠分离,非main PLY施加XY平移</span></div>
+          <div class="fd"><label>bias_margin (m)</label><input type="text" id="pm-f-bias_margin" step="0.01" size="5"><span class="tip">人物核心间额外安全距离。越大越暴力</span></div>
+          <div class="fd"><label>bias_radius_percentile</label><input type="text" id="pm-f-bias_radius_percentile" step="1" size="4"><span class="tip">核心半径百分位数(0~100)。越小越紧</span></div>
         </div>
         <div class="ms"><h3>clip 参数</h3>
-          <div class="fd"><label title="最外层球壳丢弃比例">clip_percent</label><input type="text" id="pm-c-clip_percent" step="0.01" size="5"></div>
-          <div class="fd"><label title="启用去噪,移除孤立漂浮高斯">denoise</label><input type="checkbox" id="pm-c-denoise"
-            onchange="let b=this.checked;document.getElementById('pm-c-denoise_method').disabled=!b;document.getElementById('pm-c-denoise_grid_cell').disabled=!b;document.getElementById('pm-c-denoise_min_points').disabled=!b;document.getElementById('pm-c-denoise_voxel_size').disabled=!b;document.getElementById('pm-c-height_up').disabled=!b;document.getElementById('pm-c-height_down').disabled=!b;document.getElementById('pm-c-radius_scale').disabled=!b"></div>
-          <div class="fd"><label title="去噪方法: region-grow(网格区域生长,默认) 或 components(连通分量)">denoise_method</label>
+          <div class="fd"><label>clip_percent</label><input type="text" id="pm-c-clip_percent" step="0.01" size="5"><span class="tip">最外层球壳丢弃比例</span></div>
+          <div class="fd"><label>denoise</label><input type="checkbox" id="pm-c-denoise"
+            onchange="let b=this.checked;document.getElementById('pm-c-denoise_method').disabled=!b;document.getElementById('pm-c-denoise_grid_cell').disabled=!b;document.getElementById('pm-c-denoise_min_points').disabled=!b;document.getElementById('pm-c-denoise_voxel_size').disabled=!b;document.getElementById('pm-c-height_up').disabled=!b;document.getElementById('pm-c-height_down').disabled=!b;document.getElementById('pm-c-radius_scale').disabled=!b"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
+          <div class="fd"><label>denoise_method</label>
             <select id="pm-c-denoise_method" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
               <option value="region-grow">region-grow</option>
               <option value="components">components</option>
-            </select></div>
-          <div class="fd"><label title="[region-grow] 2D网格边长(米,默认0.15)">denoise_grid_cell (m)</label><input type="text" id="pm-c-denoise_grid_cell" step="0.01" size="5"></div>
-          <div class="fd"><label title="[region-grow] 每个grid cell最低点数阈值(默认30)。数值越大剔除越激进">denoise_min_points</label><input type="text" id="pm-c-denoise_min_points" step="1" size="4"></div>
-          <div class="fd"><label title="[components] 3D体素边长(米,默认0.30)">denoise_voxel_size (m)</label><input type="text" id="pm-c-denoise_voxel_size" step="0.01" size="5"></div>
-          <div class="fd"><label title="[region-grow] 圆柱上方保留高度(米)">height_up (m)</label><input type="text" id="pm-c-height_up" step="0.1" size="4"></div>
-          <div class="fd"><label title="[region-grow] 圆柱下方保留高度(米)">height_down (m)</label><input type="text" id="pm-c-height_down" step="0.1" size="4"></div>
-          <div class="fd"><label title="[region-grow+ring-delete] 拟合圆半径缩放系数">radius_scale</label><input type="text" id="pm-c-radius_scale" step="0.01" size="5"></div>
-          <div class="fd"><label title="启用环形区域点删除">ring_delete</label><input type="checkbox" id="pm-c-ring_delete"
-            onchange="let b=this.checked;document.getElementById('pm-c-ring_outer_delta').disabled=!b;document.getElementById('pm-c-ring_inner_delta').disabled=!b;document.getElementById('pm-c-ring_height_up').disabled=!b;document.getElementById('pm-c-ring_height_down').disabled=!b"></div>
-          <div class="fd"><label title="外环扩张量(米,默认0.5)">ring_outer_delta (m)</label><input type="text" id="pm-c-ring_outer_delta" step="0.01" size="5"></div>
-          <div class="fd"><label title="内环收缩量(米,默认0.3)">ring_inner_delta (m)</label><input type="text" id="pm-c-ring_inner_delta" step="0.01" size="5"></div>
-          <div class="fd"><label title="环形删除的上高度(米)">ring_height_up (m)</label><input type="text" id="pm-c-ring_height_up" step="0.1" size="4"></div>
-          <div class="fd"><label title="环形删除的下高度(米)">ring_height_down (m)</label><input type="text" id="pm-c-ring_height_down" step="0.1" size="4"></div>
+            </select><span class="tip">region-grow=网格区域生长 / components=连通分量</span></div>
+          <div class="fd"><label>denoise_grid_cell (m)</label><input type="text" id="pm-c-denoise_grid_cell" step="0.01" size="5"><span class="tip">[region-grow] 2D网格边长, 默认0.15</span></div>
+          <div class="fd"><label>denoise_min_points</label><input type="text" id="pm-c-denoise_min_points" step="1" size="4"><span class="tip">[region-grow] grid cell最低点数,默认30</span></div>
+          <div class="fd"><label>denoise_voxel_size (m)</label><input type="text" id="pm-c-denoise_voxel_size" step="0.01" size="5"><span class="tip">[components] 3D体素边长,默认0.30</span></div>
+          <div class="fd"><label>height_up (m)</label><input type="text" id="pm-c-height_up" step="0.1" size="4"><span class="tip">[region-grow] 圆柱上方保留高度</span></div>
+          <div class="fd"><label>height_down (m)</label><input type="text" id="pm-c-height_down" step="0.1" size="4"><span class="tip">[region-grow] 圆柱下方保留高度</span></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-c-radius_scale" step="0.01" size="5"><span class="tip">[region-grow+ring] 拟合圆半径缩放</span></div>
+          <div class="fd"><label>ring_delete</label><input type="checkbox" id="pm-c-ring_delete"
+            onchange="let b=this.checked;document.getElementById('pm-c-ring_outer_delta').disabled=!b;document.getElementById('pm-c-ring_inner_delta').disabled=!b;document.getElementById('pm-c-ring_height_up').disabled=!b;document.getElementById('pm-c-ring_height_down').disabled=!b"><span class="tip">启用环形区域点删除</span></div>
+          <div class="fd"><label>ring_outer_delta (m)</label><input type="text" id="pm-c-ring_outer_delta" step="0.01" size="5"><span class="tip">外环扩张量,默认0.5</span></div>
+          <div class="fd"><label>ring_inner_delta (m)</label><input type="text" id="pm-c-ring_inner_delta" step="0.01" size="5"><span class="tip">内环收缩量,默认0.3</span></div>
+          <div class="fd"><label>ring_height_up (m)</label><input type="text" id="pm-c-ring_height_up" step="0.1" size="4"><span class="tip">环形删除上高度</span></div>
+          <div class="fd"><label>ring_height_down (m)</label><input type="text" id="pm-c-ring_height_down" step="0.1" size="4"><span class="tip">环形删除下高度</span></div>
         </div>
         <div class="ms"><h3>interpolate 参数</h3>
-          <div class="fd"><label title="插值总帧数">total</label><input type="text" id="pm-i-total" step="1" size="4"></div>
-          <div class="fd"><label title="锚点相机编号">anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"></div>
-          <div class="fd"><label title="插值圆半径缩放系数">radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"></div>
+          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
+          <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
         </div>
       </div>
     </div>
@@ -943,8 +944,10 @@ def _build_presets_page() -> str:
     .field input[type="text"]{{width:90px}}
     .field input[type="text"]{{width:140px}}
     .field input[type="checkbox"]{{width:auto;margin-right:4px}}
+    .tip{{font-size:11px;color:#aaa295;flex:1;min-width:120px;line-height:1.4;margin-left:2px}}
     #editor{{display:none}}
     #no-preset{{color:#7a7368;font-size:14px;padding:20px 0}}
+    body{{max-width:1050px}}
   </style>
 </head>
 <body>
@@ -963,63 +966,63 @@ def _build_presets_page() -> str:
   <div id="editor">
     <div class="section">
       <h2>fuse 参数</h2>
-      <div class="field"><label title="拟合圆所用的相机范围 id=0..max_index（从0开始,包含max_index）">max_index</label>
-        <input type="text" id="f-max_index" step="1" size="4"></div>
-      <div class="field"><label title="对拟合圆半径的缩放系数。<1 收紧圆柱,只保留更靠近圆心的点">radius_scale</label>
-        <input type="text" id="f-radius_scale" step="0.01" size="5"></div>
-      <div class="field"><label title="圆柱沿法向量上方保留高度(米)。人物身高约2m,建议2~3">height_up (m)</label>
-        <input type="text" id="f-height_up" step="0.1" size="4"></div>
-      <div class="field"><label title="地面侧搜索范围(米)。典型值 0.3~0.5，越小越保守">height_down (m)</label>
-        <input type="text" id="f-height_down" step="0.1" size="4"></div>
-      <div class="field"><label title="启用人物重叠分离。检测密度峰值,对重叠非main PLY施加XY平移">bias</label>
-        <input type="checkbox" id="f-bias" onchange="toggleBias()"></div>
-      <div class="field"><label title="分离后人物核心间的额外安全距离(米)。越大越暴力,越小越保守">bias_margin (m)</label>
-        <input type="text" id="f-bias_margin" step="0.01" size="5"></div>
-      <div class="field"><label title="核心半径百分位数(0~100)。值越小核心越紧">bias_radius_percentile</label>
-        <input type="text" id="f-bias_radius_percentile" step="1" size="4"></div>
+      <div class="field"><label>max_index</label>
+        <input type="text" id="f-max_index" step="1" size="4"><span class="tip">拟合圆相机范围 id=0..max_index（含max_index）</span></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="text" id="f-radius_scale" step="0.01" size="5"><span class="tip"><1 收紧圆柱,只保留靠近圆心点</span></div>
+      <div class="field"><label>height_up (m)</label>
+        <input type="text" id="f-height_up" step="0.1" size="4"><span class="tip">圆柱法向量上方保留高度,人物约2m</span></div>
+      <div class="field"><label>height_down (m)</label>
+        <input type="text" id="f-height_down" step="0.1" size="4"><span class="tip">地面侧搜索范围。典型值 0.3~0.5</span></div>
+      <div class="field"><label>bias</label>
+        <input type="checkbox" id="f-bias" onchange="toggleBias()"><span class="tip">启用人物重叠分离,非main PLY施加XY平移</span></div>
+      <div class="field"><label>bias_margin (m)</label>
+        <input type="text" id="f-bias_margin" step="0.01" size="5"><span class="tip">人物核心间额外安全距离。越大越暴力</span></div>
+      <div class="field"><label>bias_radius_percentile</label>
+        <input type="text" id="f-bias_radius_percentile" step="1" size="4"><span class="tip">核心半径百分位数(0~100)。越小越紧</span></div>
     </div>
     <div class="section">
       <h2>clip 参数</h2>
-      <div class="field"><label title="最外层球壳丢弃比例">clip_percent</label>
-        <input type="text" id="c-clip_percent" step="0.01" size="5"></div>
-      <div class="field"><label title="启用去噪,移除孤立漂浮高斯">denoise</label>
-        <input type="checkbox" id="c-denoise" onchange="toggleDenoise()"></div>
-      <div class="field"><label title="去噪方法: region-grow(网格区域生长,默认) 或 components(连通分量)">denoise_method</label>
+      <div class="field"><label>clip_percent</label>
+        <input type="text" id="c-clip_percent" step="0.01" size="5"><span class="tip">最外层球壳丢弃比例</span></div>
+      <div class="field"><label>denoise</label>
+        <input type="checkbox" id="c-denoise" onchange="toggleDenoise()"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
+      <div class="field"><label>denoise_method</label>
         <select id="c-denoise_method" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
           <option value="region-grow">region-grow</option>
           <option value="components">components</option>
-        </select></div>
-      <div class="field"><label title="[region-grow] 2D网格边长(米,默认0.15)">denoise_grid_cell (m)</label>
-        <input type="text" id="c-denoise_grid_cell" step="0.01" size="5"></div>
-      <div class="field"><label title="[region-grow] 每个grid cell最低点数阈值(默认30)。数值越大剔除越激进">denoise_min_points</label>
-        <input type="text" id="c-denoise_min_points" step="1" size="4"></div>
-      <div class="field"><label title="[components] 3D体素边长(米,默认0.30)">denoise_voxel_size (m)</label>
-        <input type="text" id="c-denoise_voxel_size" step="0.01" size="5"></div>
-      <div class="field"><label title="[region-grow] 圆柱上方保留高度(米)">height_up (m)</label>
-        <input type="text" id="c-height_up" step="0.1" size="4"></div>
-      <div class="field"><label title="[region-grow] 圆柱下方保留高度(米)">height_down (m)</label>
-        <input type="text" id="c-height_down" step="0.1" size="4"></div>
-      <div class="field"><label title="[region-grow+ring-delete] 拟合圆半径缩放系数">radius_scale</label>
-        <input type="text" id="c-radius_scale" step="0.01" size="5"></div>
-      <div class="field"><label title="启用环形区域点删除">ring_delete</label>
-        <input type="checkbox" id="c-ring_delete" onchange="toggleRing()"></div>
-      <div class="field"><label title="外环扩张量(米,默认0.5)">ring_outer_delta (m)</label>
-        <input type="text" id="c-ring_outer_delta" step="0.01" size="5"></div>
-      <div class="field"><label title="内环收缩量(米,默认0.3)">ring_inner_delta (m)</label>
-        <input type="text" id="c-ring_inner_delta" step="0.01" size="5"></div>
-      <div class="field"><label title="环形删除的上高度(米)">ring_height_up (m)</label>
-        <input type="text" id="c-ring_height_up" step="0.1" size="4"></div>
-      <div class="field"><label title="环形删除的下高度(米)">ring_height_down (m)</label>
-        <input type="text" id="c-ring_height_down" step="0.1" size="4"></div>
+        </select><span class="tip">region-grow=网格区域生长 / components=连通分量</span></div>
+      <div class="field"><label>denoise_grid_cell (m)</label>
+        <input type="text" id="c-denoise_grid_cell" step="0.01" size="5"><span class="tip">[region-grow] 2D网格边长,默认0.15</span></div>
+      <div class="field"><label>denoise_min_points</label>
+        <input type="text" id="c-denoise_min_points" step="1" size="4"><span class="tip">[region-grow] grid cell最低点数,默认30</span></div>
+      <div class="field"><label>denoise_voxel_size (m)</label>
+        <input type="text" id="c-denoise_voxel_size" step="0.01" size="5"><span class="tip">[components] 3D体素边长,默认0.30</span></div>
+      <div class="field"><label>height_up (m)</label>
+        <input type="text" id="c-height_up" step="0.1" size="4"><span class="tip">[region-grow] 圆柱上方保留高度</span></div>
+      <div class="field"><label>height_down (m)</label>
+        <input type="text" id="c-height_down" step="0.1" size="4"><span class="tip">[region-grow] 圆柱下方保留高度</span></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="text" id="c-radius_scale" step="0.01" size="5"><span class="tip">[region-grow+ring] 拟合圆半径缩放</span></div>
+      <div class="field"><label>ring_delete</label>
+        <input type="checkbox" id="c-ring_delete" onchange="toggleRing()"><span class="tip">启用环形区域点删除</span></div>
+      <div class="field"><label>ring_outer_delta (m)</label>
+        <input type="text" id="c-ring_outer_delta" step="0.01" size="5"><span class="tip">外环扩张量,默认0.5</span></div>
+      <div class="field"><label>ring_inner_delta (m)</label>
+        <input type="text" id="c-ring_inner_delta" step="0.01" size="5"><span class="tip">内环收缩量,默认0.3</span></div>
+      <div class="field"><label>ring_height_up (m)</label>
+        <input type="text" id="c-ring_height_up" step="0.1" size="4"><span class="tip">环形删除上高度</span></div>
+      <div class="field"><label>ring_height_down (m)</label>
+        <input type="text" id="c-ring_height_down" step="0.1" size="4"><span class="tip">环形删除下高度</span></div>
     </div>
     <div class="section">
       <h2>interpolate 参数</h2>
-      <div class="field"><label title="插值总帧数">total</label>
-        <input type="text" id="i-total" step="1" size="4"></div>
-      <div class="field"><label title="锚点相机编号">anchor_camera</label>
-        <input type="text" id="i-anchor_camera" placeholder="006" size="4"></div>
-      <div class="field"><label title="插值圆半径缩放系数">radius_scale</label>
-        <input type="text" id="i-radius_scale" step="0.01" size="5"></div>
+      <div class="field"><label>total</label>
+        <input type="text" id="i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
+      <div class="field"><label>anchor_camera</label>
+        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
+      <div class="field"><label>radius_scale</label>
+        <input type="text" id="i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
