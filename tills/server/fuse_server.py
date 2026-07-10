@@ -8,8 +8,12 @@ Three-column layout:
   - JSONs (single-select) from ``cfg["jsons_path"]``
 
 Usage:
-  python -m tills.server.fuse_server --config CameraData/05/pipeline.json
-  python -m tills.server.fuse_server --config CameraData/05/pipeline.json --port 8081
+  # 项目初始化（首次使用）
+  uv run python -m tills.server.fuse_server init 06
+
+  # 启动服务
+  uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json
+  uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json --port 8081
 """
 
 import argparse
@@ -1494,6 +1498,17 @@ def poll_loop(state: FuseState, broadcaster: SSEBroadcaster,
 # ── main ─────────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── init subcommand (before argparse) ──
+    if len(sys.argv) >= 2 and sys.argv[1] == "init":
+        if len(sys.argv) < 3:
+            print("ERROR: init 需要项目名参数")
+            print("Usage: uv run python -m tills.server.fuse_server init <project>")
+            print("Example: uv run python -m tills.server.fuse_server init 06")
+            sys.exit(1)
+        from tills.server._server import init_project
+        init_project(sys.argv[2])
+        return
+
     parser = argparse.ArgumentParser(description="v8 Fuse Server")
     parser.add_argument("--config", required=True,
                         help="Path to pipeline.json")

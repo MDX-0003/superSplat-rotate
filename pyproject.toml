@@ -10,5 +10,5 @@ dependencies = [
 ]
 
 [tool.uv]
-# Python scripts live under tills/ and tills_ply/
-# Run with:  uv run python tills/run_pipeline_v7.py --config ...
+# All Python commands must use `uv run python` prefix.
+# Example: uv run python -m tills.server.train_daemon --config CameraData/05/pipeline.json

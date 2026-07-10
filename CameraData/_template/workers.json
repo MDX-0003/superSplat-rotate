@@ -20,9 +20,9 @@
   "workers": [
     {
       "id": "host",
-      "hostname": "HOST-PC",
+      "hostname": "localhost",
       "ip": "127.0.0.1",
-      "ssh_user": "Administrator",
+      "ssh_user": null,
       "ssh_port": 22,
       "ssh_key_path": null,
       "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
@@ -30,43 +30,13 @@
     },
     {
       "id": "worker1",
-      "hostname": "WORKER1-PC",
+      "hostname": "WIN-20250715DRG",
       "ip": "172.28.52.135",
       "ssh_user": "Administrator",
       "ssh_port": 22,
       "ssh_key_path": null,
-      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
-      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
-    },
-    {
-      "id": "worker2",
-      "hostname": "WORKER2-PC",
-      "ip": "172.28.52.135",
-      "ssh_user": "Administrator",
-      "ssh_port": 22,
-      "ssh_key_path": null,
-      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
-      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
-    },
-    {
-      "id": "worker3",
-      "hostname": "WORKER3-PC",
-      "ip": "172.28.52.135",
-      "ssh_user": "Administrator",
-      "ssh_port": 22,
-      "ssh_key_path": null,
-      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
-      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
-    },
-    {
-      "id": "worker4",
-      "hostname": "WORKER4-PC",
-      "ip": "172.28.52.135",
-      "ssh_user": "Administrator",
-      "ssh_port": 22,
-      "ssh_key_path": null,
-      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
-      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+      "litegs_path": "E:/code/srcs/LiteGSWin",
+      "supersplat_path": "E:/code/srcs/supersplat"
     }
   ]
 }

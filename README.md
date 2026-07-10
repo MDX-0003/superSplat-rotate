@@ -52,59 +52,68 @@ To initialize a local development environment for SuperSplat, ensure you have [N
 
 When changes to the source are detected, SuperSplat is rebuilt automatically. Simply refresh your browser to see your changes.
 
-## Python 管线（v7 分布式训练）
+## Python 管线（v8 Daemon）
 
-本项目包含 Python 自动化管线（`tills/`），支持单机和多机分布式 3DGS 训练。Python 依赖通过 [uv](https://docs.astral.sh/uv/) 管理。
+Python 自动化管线，包含分布式 3DGS 训练调度、PLY 融合/裁剪、SuperSplat 网页渲染。所有 Python 依赖通过 [uv](https://docs.astral.sh/uv/) 管理，声明在 [pyproject.toml](pyproject.toml)。
 
-### 环境配置
+### 从头配置环境
 
 ```powershell
-# 1. 安装 uv（如未安装）
+# 1. 安装 uv（如未安装，需重启终端生效）
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# 2. 创建虚拟环境并安装 Python 依赖
+# 2. 进入仓库，创建虚拟环境并安装 Python 依赖
 cd E:\work\26.7_SKNJ\supersplat
 uv sync
 
-# 3. 安装 Playwright 浏览器（渲染步骤需要）
+# 3. 安装 Playwright 无头浏览器（视频渲染步骤需要）
 uv run playwright install chromium
 ```
 
-依赖声明在 [pyproject.toml](pyproject.toml)，无需手动 `pip install`。
-
-### 运行 v7 分布式训练
-
-```powershell
-# 全流程（差分检测 → 分发 → 训练 → fuse → render）
-uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json
-
-# 仅训练，指定帧号（支持 frame_id 或完整目录名）
-uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json --steps train --frames 122221 151131
-
-# 本地模拟（无需副机，在本机启动 5 个进程模拟分布式）
-uv run python tills/run_pipeline_v7.py --config CameraData/05/pipeline.json --steps train --simulate-local
-```
+之后所有 Python 命令统一使用 `uv run python` 前缀，无需手动激活 venv。
 
 ### 新建项目
 
 ```powershell
-# 从模板创建配置
-cp CameraData\_template\pipeline.json CameraData\<新项目>\pipeline.json
-cp CameraData\_template\workers.json  CameraData\<新项目>\workers.json
-
-# 编辑 pipeline.json   → 修改 project、preset、litegs_path
-# 编辑 workers.json    → 修改每台机器的 hostname / ip
+# 一键创建 CameraData/<project>/ 并拷贝模板文件
+uv run python -m tills.server.train_daemon init 06
 ```
 
-配置模板和字段说明见 [CameraData/_template/](CameraData/_template/)。
+自动从 `CameraData/_template/` 拷贝 `pipeline.json` 和 `workers.json`，并将 `pipeline.json` 中的 `project` 改为 `06`。模板文件说明见 [CameraData/_template/](CameraData/_template/)。
+
+> `init` 命令在两个 daemon 中均可使用（`train_daemon` / `fuse_server`）。
+
+### 启动服务
+
+两个后台进程，浏览器实时监控：
+
+```powershell
+# 终端 1 — 训练守护进程（自动扫描 raw_images → 分发训练 → 回收 PLY）
+uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json
+
+# 终端 2 — Fuse 服务（PLY 浏览 + interpolate/fuse/clip + Playwright 渲染）
+uv run python -m tills.server.fuse_server --config CameraData/06/pipeline.json
+```
+
+| 服务 | 端口 | 浏览器 | 功能 |
+|------|:---:|------|------|
+| Train Daemon | 8080 | `http://localhost:8080` | 训练状态监控、worker 管理 |
+| Fuse Server | 8081 | `http://localhost:8081` | PLY 选择 → fuse+clip → 视频渲染 |
+| Preset Editor | 8081 | `http://localhost:8081/presets` | 参数预设编辑 |
+
+### 前置条件
+
+- **SuperSplat 前端**：渲染步骤需要本地 SuperSplat 开发服务器运行（`npm run serve`，默认 `http://localhost:3000`）。Fuse Server 面板会显示 npm 状态。
+- **SSH 免密登录**：分布式训练需要主机到副机的 SSH 免密配置。
+- **workers.json**：需根据实际机器填写 hostname、ip、litegs_path 等。模板中已预填 1 主机 + 4 副机的示例配置。
 
 ### 相关文档
 
 | 文档 | 内容 |
 |------|------|
-| [Docs/PLAN/v7-distributed-training.md](Docs/PLAN/v7-distributed-training.md) | v7 分布式训练设计方案 |
-| [Docs/PLAN/ssh-setup-guide.md](Docs/PLAN/ssh-setup-guide.md) | SSH 免密配置（前置步骤） |
-| [Docs/V5_V6_USAGE.md](Docs/V5_V6_USAGE.md) | v5/v6 管线使用手册 |
+| [Docs/HANDOFF_2026_07_10_V8.md](Docs/HANDOFF_2026_07_10_V8.md) | v8 开发交接文档（架构、调试、设计决策） |
+| [Docs/v8-daemon-usage.md](Docs/v8-daemon-usage.md) | v8 使用手册（状态机、FAQ） |
+| [Docs/v8-daemon-design.md](Docs/v8-daemon-design.md) | v8 架构设计文档 |
 
 ---
 

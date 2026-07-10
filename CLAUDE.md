@@ -2,7 +2,13 @@
 
 ## 项目概述
 
-本项目包含两套代码体系：
+本项目包含两套代码体系。**Python 环境统一使用 uv 管理**：
+
+```powershell
+uv sync                          # 首次：创建 .venv + 安装依赖
+uv run playwright install chromium  # 首次：安装 Playwright 浏览器
+uv run python -m tills.server.train_daemon --config CameraData/05/pipeline.json
+```
 
 ### 1. SuperSplat Web 编辑器（`src/`）
 

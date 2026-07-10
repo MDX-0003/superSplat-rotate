@@ -3,8 +3,12 @@
 Train Daemon — continuous polling, frame dispatch, training monitor.
 
 Usage:
-  python -m tills.server.train_daemon --config CameraData/05/pipeline.json
-  python -m tills.server.train_daemon --config CameraData/05/pipeline.json --port 8080
+  # 项目初始化（首次使用）
+  uv run python -m tills.server.train_daemon init 06
+
+  # 启动守护进程
+  uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json
+  uv run python -m tills.server.train_daemon --config CameraData/06/pipeline.json --port 8080
 
 Start this and leave it running.  Open http://localhost:8080 to monitor.
 """
@@ -813,6 +817,17 @@ def _make_routes(state: TrainState):
 # ── main ─────────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── init subcommand (before argparse) ──
+    if len(sys.argv) >= 2 and sys.argv[1] == "init":
+        if len(sys.argv) < 3:
+            print("ERROR: init 需要项目名参数")
+            print("Usage: uv run python -m tills.server.train_daemon init <project>")
+            print("Example: uv run python -m tills.server.train_daemon init 06")
+            sys.exit(1)
+        from tills.server._server import init_project
+        init_project(sys.argv[2])
+        return
+
     parser = argparse.ArgumentParser(description="v8 Train Daemon")
     parser.add_argument("--config", required=True,
                         help="Path to pipeline.json")

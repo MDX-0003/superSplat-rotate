@@ -8,6 +8,8 @@ only the features actually needed by v8 daemons.
 
 import json
 import queue
+import shutil
+import sys
 import threading
 import time as _time
 import traceback
@@ -315,3 +317,52 @@ def run_server(server: HTTPServer,
     finally:
         server.server_close()
         print(f"  HTTP server stopped.")
+
+
+# ── Project init helper (shared by train_daemon and fuse_server) ──
+
+_TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "CameraData" / "_template"
+
+
+def init_project(project_name: str) -> None:
+    """Create CameraData/<project_name>/ from _template files.
+
+    Copies pipeline.json and workers.json from the template directory,
+    modifying ``project`` and ``raw_images_path`` in pipeline.json.
+    Errors out if the target directory already exists.
+    """
+    proj_dir = Path(__file__).resolve().parent.parent.parent / "CameraData" / project_name
+
+    if proj_dir.exists():
+        print(f"ERROR: {proj_dir} 已存在，如需重新初始化请先删除该目录")
+        sys.exit(1)
+
+    proj_dir.mkdir(parents=True)
+    print(f"创建目录: {proj_dir}")
+
+    # ── pipeline.json (modify project + raw_images_path) ──
+    src_pipeline = _TEMPLATE_DIR / "pipeline.json"
+    if src_pipeline.exists():
+        with open(src_pipeline, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["project"] = project_name
+        cfg["raw_images_path"] = f"CameraData/{project_name}/raw_images"
+        dst = proj_dir / "pipeline.json"
+        with open(dst, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        print(f"  复制并修改: pipeline.json (project={project_name})")
+    else:
+        print(f"  WARNING: 模板文件不存在: {src_pipeline}")
+
+    # ── workers.json (copy as-is) ──
+    src_workers = _TEMPLATE_DIR / "workers.json"
+    if src_workers.exists():
+        dst = proj_dir / "workers.json"
+        shutil.copy2(src_workers, dst)
+        print(f"  复制: workers.json")
+    else:
+        print(f"  WARNING: 模板文件不存在: {src_workers}")
+
+    print(f"\n初始化完成: {proj_dir}")
+    print(f"  下一步: 编辑 {proj_dir / 'pipeline.json'} 中的 preset、litegs_path 等字段")
+    print(f"  启动: uv run python -m tills.server.train_daemon --config {proj_dir / 'pipeline.json'}")
