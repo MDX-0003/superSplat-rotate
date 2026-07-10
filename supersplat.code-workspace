@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../LiteGSWin"
+		},
+		{
+			"path": "../SpacetimeSlicer"
 		}
 	],
 	"settings": {}

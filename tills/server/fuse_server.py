@@ -84,6 +84,7 @@ class FuseState:
         self.npm_ok: bool = False
         self.active_tasks: set[str] = set()  # {"fuse", "render"}
         self.task_log: list[str] = []
+        self.last_clipped_ply: str | None = None  # set after fuse+clip, consumed by page
         self._lock = threading.Lock()
 
     def scan_all(self) -> bool:
@@ -109,10 +110,12 @@ class FuseState:
                 "idx": full_idx[p.name],  # 1-based global index
             })
 
-        # ── render PLYs: <proj>-clip/*.ply ──
+        # ── render PLYs: <proj>-clip/*.ply (newest first) ──
         render_result = []
         if clip_dir.is_dir():
-            for p in sorted(clip_dir.glob("*.ply")):
+            plys = sorted(clip_dir.glob("*.ply"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+            for p in plys:
                 mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%m-%d %H:%M")
                 size_mb = round(p.stat().st_size / 1024 ** 2, 1)
                 render_result.append({
@@ -120,11 +123,17 @@ class FuseState:
                     "mtime": mtime, "path": str(p),
                 })
 
-        # ── JSON files: jsons_path/*.json ──
+        # ── JSON files: project dir cameras.json + cameras_align.json ──
         json_result = []
+        for jname in ("cameras.json", "cameras_align.json"):
+            jp = proj_dir / jname
+            if jp.exists():
+                json_result.append({"name": jname, "path": str(jp), "source": "proj"})
+
+        # ── JSON files: jsons_path/*.json ──
         if self.jsons_dir and self.jsons_dir.is_dir():
             for p in sorted(self.jsons_dir.glob("*.json")):
-                json_result.append({"name": p.name, "path": str(p)})
+                json_result.append({"name": p.name, "path": str(p), "source": "external"})
 
         # ── npm / SuperSplat dev server ──
         npm_ok = check_dev_server(SUPERSPLAT_URL)
@@ -191,7 +200,8 @@ _CSS = """
   .log-body::-webkit-scrollbar-thumb{background:#c9bfa8;border-radius:3px}
   .preview-bar{background:#fffdf7;border:1px solid #d9cfb8;border-radius:4px;
                padding:8px 10px;margin-bottom:8px;font-size:13px;
-               display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+               display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+               position:sticky;top:0;z-index:1}
   .preview-bar .label{color:#7a7368;white-space:nowrap}
   .preview-bar .path{color:#3e3a35;font-family:Consolas,monospace;flex:1;
                      word-break:break-all}
@@ -201,6 +211,14 @@ _CSS = """
          font-size:11px;font-weight:600;margin-left:4px}
   .badge.main{background:#5b7c5a;color:#fff}
   .badge.pos{background:#d9cfb8;color:#5b5a4e}
+  .render-table-wrap{max-height:320px;overflow-y:auto;border-radius:6px;
+                      box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .render-table-wrap table{box-shadow:none;border-radius:0;margin-bottom:0}
+  .render-table-wrap::-webkit-scrollbar{width:6px}
+  .render-table-wrap::-webkit-scrollbar-thumb{background:#c9bfa8;border-radius:3px}
+  .json-section{margin-bottom:8px}
+  .json-section h3{font-size:12px;color:#7a7368;margin:4px 0 3px;
+                   padding-bottom:2px;border-bottom:1px solid #e8e0d3}
   .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;
                   background:rgba(0,0,0,.45);z-index:1000;
                   justify-content:center;align-items:flex-start;padding-top:40px}
@@ -244,6 +262,8 @@ def build_fuse_page(state: FuseState) -> str:
         active = set(state.active_tasks)
         npm_ok = state.npm_ok
         log_lines = list(state.task_log[-50:])
+        auto_select_name = state.last_clipped_ply
+        state.last_clipped_ply = None  # one-shot consume
 
     # ── fuse column (ordered multi-select) ──
     fuse_rows = ""
@@ -262,27 +282,38 @@ def build_fuse_page(state: FuseState) -> str:
 
     # ── render column (single-select) ──
     render_rows = ""
+    auto_select_idx = -1
     for i, p in enumerate(render_plys):
+        if auto_select_name and p["name"] == auto_select_name:
+            auto_select_idx = i
+        checked_attr = 'checked' if i == auto_select_idx else ''
         render_rows += f"""
         <tr class="row" data-col="render" data-idx="{i}"
             onclick="selectOne(this)">
           <td><input type="radio" name="render-ply" value="{i}"
+                     {checked_attr}
                      onclick="event.stopPropagation()"></td>
           <td>{p['name']}</td>
           <td>{p['size_mb']} MB</td>
           <td>{p['mtime']}</td>
         </tr>"""
 
-    # ── JSON column (single-select) ──
-    json_rows = ""
+    # ── JSON column: build rows with source flag ──
+    proj_json_rows = ""
+    ext_json_rows = ""
     for i, j in enumerate(json_files):
-        json_rows += f"""
+        row_html = f"""
         <tr class="row" data-col="json" data-idx="{i}"
             onclick="selectOne(this)">
           <td><input type="radio" name="render-json" value="{i}"
+                     data-path="{j['path']}"
                      onclick="event.stopPropagation()"></td>
           <td colspan="3">{j['name']}</td>
         </tr>"""
+        if j.get("source") == "proj":
+            proj_json_rows += row_html
+        else:
+            ext_json_rows += row_html
 
     # ── button states ──
     fuse_disabled = 'disabled' if ('fuse' in active or not fuse_plys) else ''
@@ -322,6 +353,7 @@ def build_fuse_page(state: FuseState) -> str:
     <!-- Fuse column -->
     <div class="col">
       <h2>Fuse PLYs（顺序敏感）</h2>
+      <div class="render-table-wrap">
       <div class="preview-bar" id="preview-bar" style="display:none">
         <span class="label">选中顺序:</span>
         <span id="preview-order"></span>
@@ -334,6 +366,7 @@ def build_fuse_page(state: FuseState) -> str:
         <thead><tr><th></th><th>文件名</th><th>大小</th><th>时间</th></tr></thead>
         <tbody>{fuse_rows}</tbody>
       </table>
+      </div>
       <p style="color:#7a7368;font-size:11px;margin:4px 0">
         点击选择（首个 = main，全部点保留），再次点击取消，顺序决定 combine 名称。
       </p>
@@ -345,29 +378,29 @@ def build_fuse_page(state: FuseState) -> str:
           {_preset_options_html(state)}
         </select>
       </label>
-      <button class="fuse" {fuse_disabled} onclick="doFuse()">fuse + clip 选中</button>
+      <button class="fuse" {fuse_disabled} onclick="doFuse()">interpolate + fuse + clip 选中</button>
     </div>
 
     <!-- Render column -->
     <div class="col">
-      <h2>Render PLYs（单选）</h2>
+      <h2>Render PLYs（单选 · 最新在前）</h2>
+      <div class="render-table-wrap">
       <table>
         <thead><tr><th></th><th>文件名</th><th>大小</th><th>时间</th></tr></thead>
         <tbody>{render_rows}</tbody>
       </table>
+      </div>
     </div>
 
     <!-- JSON column -->
     <div class="col">
-      <h2>JSONs（单选）</h2>
-      <table>
-        <thead><tr><th></th><th>文件名</th></tr></thead>
-        <tbody>{json_rows}</tbody>
-      </table>
+      <h2>JSONs（单选 · 全局单选）</h2>
+      {"<div class='json-section'><h3>📁 项目 JSON</h3><table><thead><tr><th></th><th>文件名</th></tr></thead><tbody>" + proj_json_rows + "</tbody></table></div>" if proj_json_rows else ""}
+      {"<div class='json-section'><h3>📂 外部 JSON (jsons_path)</h3><table><thead><tr><th></th><th>文件名</th></tr></thead><tbody>" + ext_json_rows + "</tbody></table></div>" if ext_json_rows else "<p style='color:#aaa295;font-size:11px;margin:4px 0'>jsons_path 无文件</p>"}
+      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>JSON 列表为空（无项目 JSON 且 jsons_path 无文件）</p>" if render_no_json else ""}
       <button class="render-btn" {render_disabled} onclick="doRender()">render 选中</button>
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>SuperSplat 未启动 (npm run serve)</p>" if not npm_ok else ""}
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>Render PLY 列表为空 (尚未 fuse+clip)</p>" if render_no_ply else ""}
-      {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>JSON 列表为空 (jsons_path 无文件)</p>" if render_no_json else ""}
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>render 正在运行</p>" if 'render' in active else ""}
     </div>
   </div>
@@ -445,7 +478,7 @@ def build_fuse_page(state: FuseState) -> str:
       updateFuseUI();
     }}
 
-    // ── render / json selection (unchanged) ──
+    // ── render / json selection ──
     function selectOne(tr) {{
       let radio = tr.querySelector('input[type="radio"]');
       radio.checked = true;
@@ -454,6 +487,10 @@ def build_fuse_page(state: FuseState) -> str:
         r.classList.remove('selected');
       }}
       tr.classList.add('selected');
+      // persist JSON selection via localStorage
+      if (col === 'json' && radio.dataset.path) {{
+        localStorage.setItem('fuse-selected-json-path', radio.dataset.path);
+      }}
     }}
 
     function getRenderPlyIndex() {{
@@ -557,6 +594,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
+      pmToggleDenoise(); pmToggleRing();
     }}
     function pmSet(id, val, isCb, isTxt) {{
       let el = document.getElementById(id);
@@ -619,6 +657,63 @@ def build_fuse_page(state: FuseState) -> str:
       if(d.status==='ok'){{refreshDropdowns();}}
       else alert('ERROR: '+d.message);
     }}
+    function pmToggleDenoise() {{
+      let b = document.getElementById('pm-c-denoise').checked;
+      let method = document.getElementById('pm-c-denoise_method').value;
+      let isRegion = (method === 'region-grow');
+      document.getElementById('pm-c-denoise_method').disabled = !b;
+      // region-grow only: show when denoise=on AND method=region-grow
+      let showRegion = b && isRegion;
+      ['pm-c-denoise_grid_cell','pm-c-height_up','pm-c-height_down'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !showRegion; el.parentElement.style.display = showRegion ? '' : 'none';
+      }});
+      // components only: show when denoise=on AND method=components
+      let showComp = b && !isRegion;
+      let vxEl = document.getElementById('pm-c-denoise_voxel_size');
+      if (vxEl) {{ vxEl.disabled = !showComp; vxEl.parentElement.style.display = showComp ? '' : 'none'; }}
+      // shared: visible when denoise=on
+      let mpEl = document.getElementById('pm-c-denoise_min_points');
+      if (mpEl) {{ mpEl.disabled = !b; mpEl.parentElement.style.display = b ? '' : 'none'; }}
+      // radius_scale: always visible; enabled when region-grow OR ring_delete is active
+      let ringOn = document.getElementById('pm-c-ring_delete').checked;
+      let rsEl = document.getElementById('pm-c-radius_scale');
+      if (rsEl) rsEl.disabled = !(showRegion || ringOn);
+    }}
+    function pmToggleRing() {{
+      let b = document.getElementById('pm-c-ring_delete').checked;
+      ['pm-c-ring_outer_delta','pm-c-ring_inner_delta','pm-c-ring_height_up','pm-c-ring_height_down'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !b; el.parentElement.style.display = b ? '' : 'none';
+      }});
+      // radius_scale shared between ring_delete and denoise region-grow
+      let denoiseOn = document.getElementById('pm-c-denoise').checked;
+      let isRegion = document.getElementById('pm-c-denoise_method').value === 'region-grow';
+      let rsEl = document.getElementById('pm-c-radius_scale');
+      if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
+    }}
+    // ── restore persisted selections on page load ──
+    (function() {{
+      // auto-select render PLY row highlight (radio checked in HTML by server)
+      let autoRadio = document.querySelector('input[name="render-ply"]:checked');
+      if (autoRadio) {{
+        let tr = autoRadio.closest('tr');
+        if (tr) tr.classList.add('selected');
+      }}
+      // restore persisted JSON selection (iterate to avoid CSS-backslash bug)
+      let savedPath = localStorage.getItem('fuse-selected-json-path');
+      if (savedPath) {{
+        let allRadios = document.querySelectorAll('input[name="render-json"]');
+        for (let r of allRadios) {{
+          if (r.dataset.path === savedPath) {{
+            r.checked = true;
+            let tr = r.closest('tr');
+            if (tr) tr.classList.add('selected');
+            break;
+          }}
+        }}
+      }}
+    }})();
   </script>
 
   <!-- Preset Editor Modal -->
@@ -652,11 +747,11 @@ def build_fuse_page(state: FuseState) -> str:
         <div class="ms"><h3>clip 参数</h3>
           <div class="fd"><label>clip_percent</label><input type="text" id="pm-c-clip_percent" step="0.01" size="5"><span class="tip">最外层球壳丢弃比例</span></div>
           <div class="fd"><label>denoise</label><input type="checkbox" id="pm-c-denoise"
-            onchange="let b=this.checked;document.getElementById('pm-c-denoise_method').disabled=!b;document.getElementById('pm-c-denoise_grid_cell').disabled=!b;document.getElementById('pm-c-denoise_min_points').disabled=!b;document.getElementById('pm-c-denoise_voxel_size').disabled=!b;document.getElementById('pm-c-height_up').disabled=!b;document.getElementById('pm-c-height_down').disabled=!b;document.getElementById('pm-c-radius_scale').disabled=!b"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
+            onchange="pmToggleDenoise()" title="启用去噪，移除孤立漂浮高斯点。两种算法可选：region-grow（2D网格密度峰+区域生长法，需要cameras.json拟合圆）或 components（3D体素连通分量法，纯几何方法，无需cameras.json）"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
           <div class="fd"><label>denoise_method</label>
-            <select id="pm-c-denoise_method" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
-              <option value="region-grow">region-grow</option>
-              <option value="components">components</option>
+            <select id="pm-c-denoise_method" onchange="pmToggleDenoise()" title="去噪算法选择" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="region-grow" title="2D网格密度峰值+8邻域区域生长法。将圆柱内点投影到2D平面，从密度最高格子出发生长，只保留与主体连通的区域。需要cameras.json拟合圆。适合去除散布在圆柱内但不连续的漂浮点">region-grow</option>
+              <option value="components" title="3D体素化+26邻域BFS连通分量法。将点云体素化后找出所有连通分量，点数少于阈值的分量被当作漂浮物丢弃。不需要cameras.json。适合去除稀疏漂浮点，对密集孤立簇效果较差">components</option>
             </select><span class="tip">region-grow=网格区域生长 / components=连通分量</span></div>
           <div class="fd"><label>denoise_grid_cell (m)</label><input type="text" id="pm-c-denoise_grid_cell" step="0.01" size="5"><span class="tip">[region-grow] 2D网格边长, 默认0.15</span></div>
           <div class="fd"><label>denoise_min_points</label><input type="text" id="pm-c-denoise_min_points" step="1" size="4"><span class="tip">[region-grow] grid cell最低点数,默认30</span></div>
@@ -665,7 +760,7 @@ def build_fuse_page(state: FuseState) -> str:
           <div class="fd"><label>height_down (m)</label><input type="text" id="pm-c-height_down" step="0.1" size="4"><span class="tip">[region-grow] 圆柱下方保留高度</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-c-radius_scale" step="0.01" size="5"><span class="tip">[region-grow+ring] 拟合圆半径缩放</span></div>
           <div class="fd"><label>ring_delete</label><input type="checkbox" id="pm-c-ring_delete"
-            onchange="let b=this.checked;document.getElementById('pm-c-ring_outer_delta').disabled=!b;document.getElementById('pm-c-ring_inner_delta').disabled=!b;document.getElementById('pm-c-ring_height_up').disabled=!b;document.getElementById('pm-c-ring_height_down').disabled=!b"><span class="tip">启用环形区域点删除</span></div>
+            onchange="pmToggleRing()" title="启用环形区域点删除。在两个同心圆之间（内圆收缩inner_delta，外圆扩张outer_delta）删除高斯点，用于清除圆环状伪影"><span class="tip">启用环形区域点删除</span></div>
           <div class="fd"><label>ring_outer_delta (m)</label><input type="text" id="pm-c-ring_outer_delta" step="0.01" size="5"><span class="tip">外环扩张量,默认0.5</span></div>
           <div class="fd"><label>ring_inner_delta (m)</label><input type="text" id="pm-c-ring_inner_delta" step="0.01" size="5"><span class="tip">内环收缩量,默认0.3</span></div>
           <div class="fd"><label>ring_height_up (m)</label><input type="text" id="pm-c-ring_height_up" step="0.1" size="4"><span class="tip">环形删除上高度</span></div>
@@ -718,6 +813,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         if idx:
             one_based.append(idx)
 
+    interp_script = TILLS_PLY_DIR / "interpolate_cameras_circle.py"
     fuse_script = TILLS_PLY_DIR / "fuse_ply.py"
     clip_script = TILLS_PLY_DIR / "clip_ply.py"
     max_index = preset.get("max_index", 89)
@@ -728,7 +824,35 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         broadcaster.broadcast("log", line)
         logger.write("fuse", line)
 
+    new_combine = None  # set after successful fuse, used in finally for auto-select
     try:
+        # Step 0: Interpolate (generate cameras_align.json)
+        ip = preset.get("interpolate", {})
+        interp_args = [
+            sys.executable, str(interp_script),
+            "--path", proj_path,
+            "--max-index", str(max_index),
+            "--total", str(ip.get("total", 300)),
+            "--anchor-camera", str(ip.get("anchor_camera", "006")),
+            "--radius-scale", str(ip.get("radius_scale", 1.0)),
+        ]
+        _log(f"interpolate: {' '.join(str(a) for a in interp_args)}")
+        result = subprocess.run(
+            interp_args, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=3600,
+        )
+        for line in result.stdout.split("\n"):
+            if line.strip():
+                _log(line)
+        if result.returncode != 0:
+            _log(f"INTERPOLATE FAILED (exit {result.returncode})")
+            if result.stderr:
+                for line in result.stderr.split("\n"):
+                    if line.strip():
+                        _log(f"[stderr] {line}")
+            return
+        _log("interpolate 完成")
+
         # Step 1: Fuse
         before_combine = set(p.name for p in proj_dir.glob("*combine*.ply"))
         fuse_args = [
@@ -800,6 +924,8 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
     finally:
         with state._lock:
             state.active_tasks.discard("fuse")
+            if new_combine is not None:
+                state.last_clipped_ply = new_combine.name
         state.scan_all()
         broadcaster.broadcast("status", "done")
 
@@ -986,11 +1112,11 @@ def _build_presets_page() -> str:
       <div class="field"><label>clip_percent</label>
         <input type="text" id="c-clip_percent" step="0.01" size="5"><span class="tip">最外层球壳丢弃比例</span></div>
       <div class="field"><label>denoise</label>
-        <input type="checkbox" id="c-denoise" onchange="toggleDenoise()"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
+        <input type="checkbox" id="c-denoise" onchange="toggleDenoise()" title="启用去噪，移除孤立漂浮高斯点。两种算法可选：region-grow（2D网格密度峰+区域生长法，需要cameras.json拟合圆）或 components（3D体素连通分量法，纯几何方法，无需cameras.json）"><span class="tip">启用去噪,移除孤立漂浮高斯</span></div>
       <div class="field"><label>denoise_method</label>
-        <select id="c-denoise_method" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
-          <option value="region-grow">region-grow</option>
-          <option value="components">components</option>
+        <select id="c-denoise_method" onchange="toggleDenoise()" title="去噪算法选择" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="region-grow" title="2D网格密度峰值+8邻域区域生长法。将圆柱内点投影到2D平面，从密度最高格子出发生长，只保留与主体连通的区域。需要cameras.json拟合圆。适合去除散布在圆柱内但不连续的漂浮点">region-grow</option>
+          <option value="components" title="3D体素化+26邻域BFS连通分量法。将点云体素化后找出所有连通分量，点数少于阈值的分量被当作漂浮物丢弃。不需要cameras.json。适合去除稀疏漂浮点，对密集孤立簇效果较差">components</option>
         </select><span class="tip">region-grow=网格区域生长 / components=连通分量</span></div>
       <div class="field"><label>denoise_grid_cell (m)</label>
         <input type="text" id="c-denoise_grid_cell" step="0.01" size="5"><span class="tip">[region-grow] 2D网格边长,默认0.15</span></div>
@@ -1093,20 +1219,38 @@ def _build_presets_page() -> str:
     }}
     function toggleDenoise() {{
       let b = document.getElementById('c-denoise').checked;
+      let method = document.getElementById('c-denoise_method').value;
+      let isRegion = (method === 'region-grow');
       document.getElementById('c-denoise_method').disabled = !b;
-      document.getElementById('c-denoise_grid_cell').disabled = !b;
-      document.getElementById('c-denoise_min_points').disabled = !b;
-      document.getElementById('c-denoise_voxel_size').disabled = !b;
-      document.getElementById('c-height_up').disabled = !b;
-      document.getElementById('c-height_down').disabled = !b;
-      document.getElementById('c-radius_scale').disabled = !b;
+      // region-grow only: show when denoise=on AND method=region-grow
+      let showRegion = b && isRegion;
+      ['c-denoise_grid_cell','c-height_up','c-height_down'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !showRegion; el.parentElement.style.display = showRegion ? '' : 'none';
+      }});
+      // components only: show when denoise=on AND method=components
+      let showComp = b && !isRegion;
+      let vxEl = document.getElementById('c-denoise_voxel_size');
+      if (vxEl) {{ vxEl.disabled = !showComp; vxEl.parentElement.style.display = showComp ? '' : 'none'; }}
+      // shared: visible when denoise=on
+      let mpEl = document.getElementById('c-denoise_min_points');
+      if (mpEl) {{ mpEl.disabled = !b; mpEl.parentElement.style.display = b ? '' : 'none'; }}
+      // radius_scale: always visible; enabled when region-grow OR ring_delete is active
+      let ringOn = document.getElementById('c-ring_delete').checked;
+      let rsEl = document.getElementById('c-radius_scale');
+      if (rsEl) rsEl.disabled = !(showRegion || ringOn);
     }}
     function toggleRing() {{
       let b = document.getElementById('c-ring_delete').checked;
-      document.getElementById('c-ring_outer_delta').disabled = !b;
-      document.getElementById('c-ring_inner_delta').disabled = !b;
-      document.getElementById('c-ring_height_up').disabled = !b;
-      document.getElementById('c-ring_height_down').disabled = !b;
+      ['c-ring_outer_delta','c-ring_inner_delta','c-ring_height_up','c-ring_height_down'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !b; el.parentElement.style.display = b ? '' : 'none';
+      }});
+      // radius_scale shared between ring_delete and denoise region-grow
+      let denoiseOn = document.getElementById('c-denoise').checked;
+      let isRegion = document.getElementById('c-denoise_method').value === 'region-grow';
+      let rsEl = document.getElementById('c-radius_scale');
+      if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
     }}
 
     function floatVal(id) {{
