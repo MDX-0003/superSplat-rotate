@@ -285,6 +285,17 @@ async def ensure_browser(page_url="http://127.0.0.1:3000/"):
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
         "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
     ]
+    # Also search Playwright's bundled Chromium (installed via `playwright install chromium`)
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    if local_appdata:
+        pw_dir = Path(local_appdata) / "ms-playwright"
+        if pw_dir.is_dir():
+            for d in sorted(pw_dir.iterdir(), reverse=True):
+                if d.is_dir() and d.name.startswith("chromium-") and not d.name.endswith("headless_shell"):
+                    candidate = d / "chrome-win64" / "chrome.exe"
+                    if candidate.exists():
+                        chrome_paths.append(str(candidate))
+                        break
     chrome_exe = None
     for cp in chrome_paths:
         if Path(cp).exists():

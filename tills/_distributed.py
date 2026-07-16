@@ -71,6 +71,9 @@ class WorkerNode:
     litegs_path: str = ""
     supersplat_path: str = ""
 
+    # cached resolved Python path (populated by resolve_worker_python)
+    python_exe: str = ""
+
     # runtime state (populated during execution)
     status: str = "idle"           # idle | copying | running | done | failed | offline
     current_frame: str = ""
@@ -948,6 +951,39 @@ def validate_workers(workers: list[WorkerNode]) -> dict[str, tuple[bool, str]]:
             ok, msg = ssh_test(w)
             results[w.id] = (ok, msg)
     return results
+
+
+def resolve_worker_python(worker: WorkerNode, timeout: int = 30) -> str:
+    """Find the real Python interpreter path for a worker via ``uv python find``.
+
+    This avoids the uv trampoline ``.venv/Scripts/python.exe`` which can fail
+    in Windows SSH sessions due to untrusted mount-point restrictions (os error 448).
+
+    The resolved path is cached on ``worker.python_exe`` so subsequent calls
+    are instant.
+
+    Args:
+        worker: Target WorkerNode.
+        timeout: SSH timeout in seconds.
+
+    Returns:
+        Absolute path to the Python executable (e.g. ``C:\\Users\\admin\\AppData\\...``),
+        or empty string if resolution failed.
+    """
+    if worker.python_exe:
+        return worker.python_exe
+
+    cmd = "uv python find 3.10"
+    try:
+        result = ssh_run(worker, cmd, timeout=timeout)
+        if result.returncode == 0 and result.stdout.strip():
+            path = result.stdout.strip().split("\n")[0].strip()
+            if path:
+                worker.python_exe = path
+                return path
+    except Exception:
+        pass
+    return ""
 
 
 # ── standalone test (run directly: python tills/_distributed.py <workers.json>) ──

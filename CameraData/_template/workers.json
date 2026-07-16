@@ -25,8 +25,8 @@
       "ssh_user": null,
       "ssh_port": 22,
       "ssh_key_path": null,
-      "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
-      "supersplat_path": "E:/work/26.7_SKNJ/supersplat"
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
     },
     {
       "id": "worker1",
@@ -35,8 +35,8 @@
       "ssh_user": "Administrator",
       "ssh_port": 22,
       "ssh_key_path": null,
-      "litegs_path": "E:/code/srcs/LiteGSWin",
-      "supersplat_path": "E:/code/srcs/supersplat"
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
     }
   ]
 }

@@ -36,7 +36,8 @@ if str(_project_root) not in sys.path:
 from tills._distributed import (
     WorkerNode, load_workers, auto_detect_host, validate_workers,
     ssh_run_async, kill_worker_process, cleanup_frame,
-    read_worker_status, scp_send_multi, ROOT,
+    read_worker_status, scp_send_multi, scp_recv_multi, ROOT,
+    resolve_worker_python,
 )
 from tills._shared import load_preset, parse_frame_dirname
 from tills.server._server import (
@@ -1074,7 +1075,6 @@ def main_loop(state: TrainState, cfg: dict,
                                           f"回收失败 {key}: PLY 不存在 "
                                           f"({remote_ply})")
                         else:
-                            from tills._distributed import scp_recv_multi
                             remote_str = str(remote_ply).replace("\\", "/")
                             ok = scp_recv_multi(worker, [remote_str], proj_dir)
                             if ok and local_ply.exists():
@@ -1088,6 +1088,24 @@ def main_loop(state: TrainState, cfg: dict,
                                           f"local_exists={local_ply.exists()}")
 
                         if collected:
+                            # Collect cameras.json (per-sub_dir, idempotent)
+                            local_cam = proj_dir / "cameras.json"
+                            if not local_cam.exists():
+                                remote_cam = worker_results / "cameras.json"
+                                if worker.is_host:
+                                    if remote_cam.exists():
+                                        shutil.copy2(str(remote_cam), str(local_cam))
+                                        _emit_log("daemon",
+                                                  f"cameras.json → {local_cam}")
+                                else:
+                                    ok_cam = scp_recv_multi(
+                                        worker,
+                                        [str(remote_cam).replace("\\", "/")],
+                                        proj_dir,
+                                    )
+                                    if ok_cam and local_cam.exists():
+                                        _emit_log("daemon",
+                                                  f"cameras.json → {local_cam}")
                             state.update_frame(key, status="done")
                         else:
                             # PLY not collected — retry if possible

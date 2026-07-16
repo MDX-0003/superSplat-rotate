@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem \"E:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\CameraData\\\\02\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(git config *)",
+      "Bash(netstat -ano)",
+      "Bash(Select-String 7897)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r'E:\\\\Programs\\\\UE Project\\\\ProjectSplat\\\\Content\\\\SFM_camera_json\\\\Sq_0610_c01_c32_Animation.json'\\)\\); print\\(f'Total frames: {len\\(d\\)}'\\); print\\(f'First: {d[0][\\\\\"position\\\\\"]}'\\); print\\(f'Last: {d[-1][\\\\\"position\\\\\"]}'\\)\")",
+      "Bash(python -c \"import json; d=json.load\\(open\\(r'E:\\\\Programs\\\\UE Project\\\\ProjectSplat\\\\Content\\\\SFM_camera_json\\\\Sq_0610_c32_c60_Animation.json'\\)\\); print\\(f'Total frames: {len\\(d\\)}'\\); print\\(f'First: {d[0][\\\\\"position\\\\\"]}'\\); print\\(f'Last: {d[-1][\\\\\"position\\\\\"]}'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(Measure-Object -Line)",
+      "PowerShell(python -c \"import json; data=json.load\\(open\\(r'E:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\CameraData\\\\05\\\\cameras.json'\\)\\); print\\(f'Total cameras: {len\\(data\\)}'\\); print\\(f'First 10 img_names: {[d[\\\\\"img_name\\\\\"] for d in data[:10]]}'\\); print\\(f'IDs with img_name=006: {[d[\\\\\"id\\\\\"] for d in data if d[\\\\\"img_name\\\\\"]==\\\\\"006\\\\\"]}'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('tills/fuse_ply.py', doraise=True\\); print\\('Syntax OK'\\)\")",
+      "Bash(mkdir -p tills_ply)",
+      "PowerShell(python e:/work/26.7_SKNJ/supersplat/tills/_test_v4_train.py)",
+      "Bash(git rev-list *)",
+      "Bash(git cat-file *)",
+      "Bash(awk '$1 == \"blob\" {print $2, $3}')",
+      "Bash(git count-objects *)",
+      "Bash(dir \"C:\\\\Users\\\\Administrator\\\\.claude\\\\projects\\\\e--work-26-7-SKNJ-supersplat\\\\memory\\\\\" 2>&1)",
+      "Bash(mkdir -p \"e:/work/26.7_SKNJ/supersplat/.claude/memory\")",
+      "PowerShell($src = \"C:\\\\Users\\\\Administrator\\\\.claude\\\\projects\\\\e--work-26-7-SKNJ-supersplat\\\\memory\\\\\"; $dst = \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\.claude\\\\memory\\\\\"; Get-ChildItem $src -File | ForEach-Object { Copy-Item $_.FullName $dst -Force }; Remove-Item $src -Recurse -Force; Get-ChildItem $dst -Name)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('tills/run_pipeline_v5.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python tills/run_pipeline_v5.py --config CameraData/08/pipeline.json --steps ply --force)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v5.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v6.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills_ply/clip_ply.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/_shared.py', doraise=True\\); py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v6.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/_shared.py', doraise=True\\); py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v5.py', doraise=True\\); py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v6.py', doraise=True\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/_shared.py', doraise=True\\); py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills/run_pipeline_v6.py', doraise=True\\); py_compile.compile\\('e:/work/26.7_SKNJ/supersplat/tills_ply/clip_ply.py', doraise=True\\); print\\('ALL OK'\\)\")",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" ls-files --cached --ignored --exclude-standard CameraData/)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" ls-files --cached CameraData/)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" check-ignore -v CameraData/template/ CameraData/template/somefile)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'tills'\\); from run_pipeline_v7 import main, _copy_frames_to_worker; print\\('OK'\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'tills'\\); from run_pipeline_v7 import main; print\\('OK'\\)\")",
+      "Bash(powershell -Command \"\\(Get-Item 'e:/work/26.7_SKNJ/supersplat/CameraData/05/0630-122221.ply'\\).Length / 1MB\")",
+      "Bash(mkdir -p \"e:/work/26.7_SKNJ/supersplat/Docs/knowledge\")"
+    ],
+    "additionalDirectories": [
+      "e:\\work\\26.7_SKNJ\\supersplat",
+      "e:\\work\\26.7_SKNJ\\supersplat\\.claude",
+      "e:\\work\\26.7_SKNJ\\supersplat\\Docs"
+    ]
+  }
+}

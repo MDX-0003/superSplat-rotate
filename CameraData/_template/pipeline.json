@@ -9,9 +9,9 @@
   ],
   "project": "05",
   "preset": "通用合并方案",
-  "raw_images_path": "E:/work/26.7_SKNJ/0630_test_imgs", 
-  "jsons_path": "E:/Programs/UE Project/JustATest/Content/JSON_Out",
-  "litegs_path": "E:/work/26.7_SKNJ/LiteGSWin",
+  "raw_images_path": "C:/raw_images/260715",
+  "jsons_path": "D:/UE/JustATest/Content/JSON_Out",
+  "litegs_path": "C:/code/LiteGSWin",
   "fps": 25,
   "resolution": "3840x2160",
   "distributed": {

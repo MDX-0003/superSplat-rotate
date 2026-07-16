@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "PowerShell(E:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\CameraData\\\\05\\\\rename_114_to_120.ps1)"
+      "PowerShell(E:\\\\work\\\\26.7_SKNJ\\\\supersplat\\\\CameraData\\\\05\\\\rename_114_to_120.ps1)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" status --short)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" status --short)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" remote -v)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" branch -a)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" log --oneline -5)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" remote -v)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" branch -a)",
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" log --oneline -5)"
     ]
   }
 }
