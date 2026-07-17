@@ -17,22 +17,65 @@
     "litegs_path": "本机 LiteGSWin 仓库的绝对路径",
     "supersplat_path": "本机 supersplat 仓库的绝对路径（副机可省略，仅训练不需要）"
   },
-  "workers": [
+    "tmp":[
     {
-      "id": "host",
-      "hostname": "localhost",
-      "ip": "127.0.0.1",
-      "ssh_user": null,
+      "id": "worker4",
+      "hostname": "DESKTOP-TJAFIK8",
+      "ip": "10.10.4.104",
+      "ssh_user": "admin",
       "ssh_port": 22,
       "ssh_key_path": null,
       "litegs_path": "C:/code/LiteGSWin",
       "supersplat_path": "C:/code/supersplat"
     },
     {
+      "id": "worker3",
+      "hostname": "DESKTOP-P5R4830",
+      "ip": "10.10.4.103",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
+    },
+    {
+      "id": "worker2",
+      "hostname": "DESKTOP-HJIJ16G",
+      "ip": "10.10.4.102",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
+    }
+  ],
+  "workers": [
+    {
+      "id": "host",
+      "hostname": "DESKTOP-4HGE4VH",
+      "ip": "127.0.0.1",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
+    },
+    
+    {
       "id": "worker1",
-      "hostname": "WIN-20250715DRG",
-      "ip": "172.28.52.135",
-      "ssh_user": "Administrator",
+      "hostname": "DESKTOP-PD6ICK9",
+      "ip": "10.10.4.101",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": null,
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat"
+    },
+    {
+      "id": "worker2",
+      "hostname": "DESKTOP-HJIJ16G",
+      "ip": "10.10.4.102",
+      "ssh_user": "admin",
       "ssh_port": 22,
       "ssh_key_path": null,
       "litegs_path": "C:/code/LiteGSWin",

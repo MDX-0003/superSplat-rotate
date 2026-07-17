@@ -756,9 +756,12 @@ def main_loop(state: TrainState, cfg: dict,
     # is stable — no extra sleep needed.
     _prev_snapshot: dict[str, tuple] = {}
 
+    _IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
     def _snapshot_dir(d: Path) -> tuple[int, set[str], dict[str, int]]:
-        """Return (count, set_of_names, {name: size})."""
-        files = list(d.iterdir())
+        """Return (image_count, set_of_image_names, {name: size}) for images only."""
+        files = [f for f in d.iterdir()
+                 if f.is_file() and f.suffix.lower() in _IMG_EXTS]
         return (
             len(files),
             {f.name for f in files},
@@ -800,6 +803,12 @@ def main_loop(state: TrainState, cfg: dict,
                 for fd in sorted(raw_dir.iterdir()):
                     if not fd.is_dir():
                         continue
+
+                    # 仅纳入第一个"-"之前为纯数字的目录
+                    prefix = fd.name.split("-")[0]
+                    if not prefix.isdigit():
+                        continue
+
                     scanned += 1
 
                     try:
@@ -876,7 +885,7 @@ def main_loop(state: TrainState, cfg: dict,
                             state.update_frame(key, status="ready")
                             _emit_log("daemon", f"帧就绪: {key} ({fd.name})")
                             print(f"  [scan] READY {key} — {cur[0]} files stable")
-                            _prev_snapshot.pop(key, None)  # cleanup
+                            # snapshot preserved for dispatch filtering
                         elif not count_ok:
                             print(f"  [scan] {key} — {cur[0]} files "
                                   f"(expect {expected}), copying in progress...")
@@ -945,15 +954,22 @@ def main_loop(state: TrainState, cfg: dict,
                     state.update_frame(key, status="copying",
                                        worker_id=best_worker.id)
 
-                    # Copy frame data to worker
+                    # Copy frame data to worker (image files only, from snapshot)
                     src = raw_dir / fs.dirname
                     worker_data = Path(best_worker.litegs_path) / "data" / fs.sub_dir
+                    snap = _prev_snapshot.get(key, (0, set(), {}))
+                    image_names = sorted(snap[1]) if snap[1] else None
 
                     if best_worker.is_host:
                         dst = worker_data / fs.dirname
                         try:
                             if not dst.exists():
-                                shutil.copytree(src, dst, dirs_exist_ok=True)
+                                dst.mkdir(parents=True, exist_ok=True)
+                                if image_names:
+                                    for name in image_names:
+                                        shutil.copy2(str(src / name), str(dst / name))
+                                else:
+                                    shutil.copytree(src, dst, dirs_exist_ok=True)
                             _emit_log("daemon", f"分发 {key} → {best_worker.id} (local)")
                         except Exception as e:
                             state.update_frame(key, status="failed",
@@ -961,7 +977,12 @@ def main_loop(state: TrainState, cfg: dict,
                             continue
                     else:
                         worker_data_str = str(worker_data).replace("\\", "/")
-                        ok = scp_send_multi(best_worker, [str(src)], worker_data_str)
+                        if image_names:
+                            # send individual image files (skip non-image clutter)
+                            src_paths = [str(src / name) for name in image_names]
+                            ok = scp_send_multi(best_worker, src_paths, worker_data_str)
+                        else:
+                            ok = scp_send_multi(best_worker, [str(src)], worker_data_str)
                         if ok:
                             _emit_log("daemon",
                                       f"分发 {key} → {best_worker.id} (SCP)")
@@ -969,6 +990,9 @@ def main_loop(state: TrainState, cfg: dict,
                             state.update_frame(key, status="failed",
                                                error_message="SCP failed")
                             continue
+
+                    # Snapshot no longer needed after dispatch
+                    _prev_snapshot.pop(key, None)
 
                     # Start training
                     state.update_frame(key, status="training")

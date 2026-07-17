@@ -7,9 +7,9 @@
     "4. 修改 litegs_path 为本机 LiteGSWin 路径",
     "5. 修改 distributed.training.* 为训练参数"
   ],
-  "project": "05",
+  "project": "01",
   "preset": "通用合并方案",
-  "raw_images_path": "C:/raw_images/260715",
+  "raw_images_path": "Z:/Test-Raw-Images",
   "jsons_path": "D:/UE/JustATest/Content/JSON_Out",
   "litegs_path": "C:/code/LiteGSWin",
   "fps": 25,
