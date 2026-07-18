@@ -346,8 +346,10 @@ def main():
                         default=cfg.get("clip_percent", 10.0),
                         help="Remove the top X%% of GS points by volume (default: 10)")
     parser.add_argument("--denoise", action="store_true",
-                        default=cfg.get("denoise", False),
+                        default=cfg.get("denoise", False), dest="denoise",
                         help="Enable denoising (see --denoise-method)")
+    parser.add_argument("--no-denoise", action="store_false", dest="denoise",
+                        help="Disable denoising (overrides config file)")
     parser.add_argument("--denoise-method", type=str,
                         default=cfg.get("denoise_method", "region-grow"),
                         choices=["region-grow", "components"],
@@ -377,8 +379,10 @@ def main():
                         default=cfg.get("radius_scale", 1.0),
                         help="[denoise region-grow + ring-delete] Scale the fitted circle radius (default: 1.0)")
     parser.add_argument("--ring-delete", action="store_true",
-                        default=cfg.get("ring_delete", False),
+                        default=cfg.get("ring_delete", False), dest="ring_delete",
                         help="Enable ring-region point deletion between two concentric circles")
+    parser.add_argument("--no-ring-delete", action="store_false", dest="ring_delete",
+                        help="Disable ring-region point deletion (overrides config file)")
     parser.add_argument("--ring-outer-delta", type=float,
                         default=cfg.get("ring_outer_delta", 0.5),
                         help="[ring-delete] Outer radius expansion in meters (default: 0.5)")

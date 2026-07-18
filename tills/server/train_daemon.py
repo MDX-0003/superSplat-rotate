@@ -35,7 +35,7 @@ if str(_project_root) not in sys.path:
 
 from tills._distributed import (
     WorkerNode, load_workers, auto_detect_host, validate_workers,
-    ssh_run_async, kill_worker_process, cleanup_frame,
+    ssh_run, ssh_run_async, kill_worker_process, cleanup_frame,
     read_worker_status, scp_send_multi, scp_recv_multi, ROOT,
     resolve_worker_python,
 )
@@ -940,6 +940,8 @@ def main_loop(state: TrainState, cfg: dict,
             ready_frames = [(k, fs) for k, fs in state.frames.items()
                             if fs.status == "ready"]
             if state.training_enabled and ready_frames:
+                training_cfg = cfg.get("distributed", {}).get("training", {})
+                max_per_worker = training_cfg.get("max_per_worker", 1)
                 worker_loads = {w.id: 0 for w in online_workers}
                 for fs in state.frames.values():
                     if fs.status == "training" and fs.worker_id:
@@ -947,7 +949,12 @@ def main_loop(state: TrainState, cfg: dict,
                             worker_loads.get(fs.worker_id, 0) + 1
 
                 for key, fs in ready_frames:
-                    best_worker = min(online_workers,
+                    # skip workers already at capacity
+                    available = [w for w in online_workers
+                                 if worker_loads.get(w.id, 0) < max_per_worker]
+                    if not available:
+                        break  # all workers busy, try next cycle
+                    best_worker = min(available,
                                       key=lambda w: worker_loads.get(w.id, 0))
                     worker_loads[best_worker.id] += 1
 
@@ -976,19 +983,31 @@ def main_loop(state: TrainState, cfg: dict,
                                                error_message=f"copy failed: {e}")
                             continue
                     else:
-                        worker_data_str = str(worker_data).replace("\\", "/")
-                        if image_names:
-                            # send individual image files (skip non-image clutter)
-                            src_paths = [str(src / name) for name in image_names]
-                            ok = scp_send_multi(best_worker, src_paths, worker_data_str)
-                        else:
-                            ok = scp_send_multi(best_worker, [str(src)], worker_data_str)
-                        if ok:
+                        try:
+                            worker_data_str = str(worker_data / fs.dirname).replace("\\", "/")
+                            if image_names:
+                                # Ensure target subdirectory exists on the remote worker
+                                ssh_run(best_worker,
+                                        f'mkdir -p "{worker_data / fs.dirname}"',
+                                        timeout=30)
+                                # send individual image files (skip non-image clutter)
+                                src_paths = [str(src / name) for name in image_names]
+                                ok = scp_send_multi(best_worker, src_paths, worker_data_str)
+                            else:
+                                ok = scp_send_multi(best_worker, [str(src)], worker_data_str)
+                            if ok:
+                                _emit_log("daemon",
+                                          f"分发 {key} → {best_worker.id} (SCP)")
+                            else:
+                                state.update_frame(key, status="failed",
+                                                   error_message="SCP failed")
+                                continue
+                        except Exception as e:
+                            state.update_frame(key, status="ready",
+                                               worker_id="",
+                                               error_message=f"SCP timeout/net: {e}")
                             _emit_log("daemon",
-                                      f"分发 {key} → {best_worker.id} (SCP)")
-                        else:
-                            state.update_frame(key, status="failed",
-                                               error_message="SCP failed")
+                                      f"分发 {key} → {best_worker.id} 失败 ({e}), 将重试")
                             continue
 
                     # Snapshot no longer needed after dispatch
@@ -1013,10 +1032,8 @@ def main_loop(state: TrainState, cfg: dict,
                         f'--sub_dir {fs.sub_dir} '
                         f'--frames {fs.dirname} '
                         f'--worker-status {status_rel}'
+                        f' --force'
                     )
-                    # On retry, force batch_run.py to ignore stale results
-                    if fs.retry_count > 0:
-                        cmd += " --force"
                     if extra_str:
                         cmd += f" {extra_str}"
 
@@ -1112,24 +1129,23 @@ def main_loop(state: TrainState, cfg: dict,
                                           f"local_exists={local_ply.exists()}")
 
                         if collected:
-                            # Collect cameras.json (per-sub_dir, idempotent)
+                            # Collect cameras.json (always overwrite)
                             local_cam = proj_dir / "cameras.json"
-                            if not local_cam.exists():
-                                remote_cam = worker_results / "cameras.json"
-                                if worker.is_host:
-                                    if remote_cam.exists():
-                                        shutil.copy2(str(remote_cam), str(local_cam))
-                                        _emit_log("daemon",
-                                                  f"cameras.json → {local_cam}")
-                                else:
-                                    ok_cam = scp_recv_multi(
-                                        worker,
-                                        [str(remote_cam).replace("\\", "/")],
-                                        proj_dir,
-                                    )
-                                    if ok_cam and local_cam.exists():
-                                        _emit_log("daemon",
-                                                  f"cameras.json → {local_cam}")
+                            remote_cam = worker_results / "cameras.json"
+                            if worker.is_host:
+                                if remote_cam.exists():
+                                    shutil.copy2(str(remote_cam), str(local_cam))
+                                    _emit_log("daemon",
+                                              f"cameras.json → {local_cam}")
+                            else:
+                                ok_cam = scp_recv_multi(
+                                    worker,
+                                    [str(remote_cam).replace("\\", "/")],
+                                    proj_dir,
+                                )
+                                if ok_cam and local_cam.exists():
+                                    _emit_log("daemon",
+                                              f"cameras.json → {local_cam}")
                             state.update_frame(key, status="done")
                         else:
                             # PLY not collected — retry if possible

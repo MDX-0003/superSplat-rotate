@@ -232,6 +232,8 @@ def build_fuse_args(preset):
         args.append("--bias")
         args.extend(["--bias-margin", str(f.get("bias_margin", 0.05))])
         args.extend(["--bias-radius-percentile", str(f.get("bias_radius_percentile", 50))])
+    else:
+        args.append("--no-bias")
     if f.get("output_subfix"):
         args.extend(["--output-subfix", str(f["output_subfix"])])
     if f.get("indices"):
@@ -252,6 +254,8 @@ def build_clip_args(preset):
         args.append("--denoise")
         args.extend(["--denoise-voxel-size", str(c.get("denoise_voxel_size", 0.30))])
         args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 50))])
+    else:
+        args.append("--no-denoise")
     if c.get("ring_delete"):
         args.append("--ring-delete")
         args.extend(["--max-index", str(max_index)])
@@ -260,6 +264,8 @@ def build_clip_args(preset):
         args.extend(["--ring-inner-delta", str(c.get("ring_inner_delta", 0.3))])
         args.extend(["--ring-height-up", str(c["ring_height_up"])])
         args.extend(["--ring-height-down", str(c["ring_height_down"])])
+    else:
+        args.append("--no-ring-delete")
     return args
 
 

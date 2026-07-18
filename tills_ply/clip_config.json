@@ -1,15 +1,15 @@
 {
     "path": "CameraData/07",
     "clip_percent": 0.05,
-    "denoise": true,
+    "denoise": false,
     "max_index": 89,
     "radius_scale": 1.0,
     "height_up": 2,
     "height_down": 0.05,
     "denoise_min_points": 20,
-    "ring_delete": true,
+    "ring_delete": false,
     "ring_outer_delta": 0.2,
-    "ring_inner_delta": 0.3,
-    "ring_height_up": 1.5,
+    "ring_inner_delta": 0.5,
+    "ring_height_up": 0.5,
     "ring_height_down": 0.3
 }

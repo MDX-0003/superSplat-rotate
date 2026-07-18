@@ -42,6 +42,13 @@ PRESETS_FILE = _project_root / "tills_ply" / "presets.json"
 PRESET_TEMPLATE_FILE = _project_root / "CameraData" / "_template" / "presets.json"
 SUPERSPLAT_URL = "http://127.0.0.1:3000/"
 
+# ── 关于 fuse_config.json / clip_config.json ─────────────────────────────────────
+# 这两个文件位于 tills_ply/，仅用于**命令行直接执行** fuse_ply.py / clip_ply.py
+# 时的参数默认值。fuse_server 和 ply_pipeline.py 都**不使用它们**：fuse_server 将
+# presets.json 中的参数完整展开为 CLI args 传入，ply_pipeline.py 同理。
+# 保留它们是为了方便开发调试时手动跑单步命令，避免每次都输入全部参数。
+# ──────────────────────────────────────────────────────────────────────────────────
+
 
 # ── Preset file I/O ──────────────────────────────────────────────────────────────
 
@@ -903,11 +910,41 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
 
         # Step 2: Clip (auto follows fuse)
         if new_combine:
+            c = preset.get("clip", {})
             clip_args = [
                 sys.executable, str(clip_script),
                 "--path", proj_path,
                 "--files", new_combine.name,
+                "--clip-percent", str(c.get("clip_percent", 10.0)),
             ]
+            # -- denoise --------------------------------------------------
+            if c.get("denoise"):
+                clip_args.append("--denoise")
+                clip_args.extend(["--denoise-method", str(c.get("denoise_method", "region-grow"))])
+                clip_args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 30))])
+                clip_args.extend(["--denoise-grid-cell", str(c.get("denoise_grid_cell", 0.15))])
+                clip_args.extend(["--denoise-voxel-size", str(c.get("denoise_voxel_size", 0.30))])
+                clip_args.extend(["--max-index", str(max_index)])
+                clip_args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
+                if c.get("height_up") is not None:
+                    clip_args.extend(["--height-up", str(c["height_up"])])
+                if c.get("height_down") is not None:
+                    clip_args.extend(["--height-down", str(c["height_down"])])
+            else:
+                clip_args.append("--no-denoise")
+            # -- ring delete ----------------------------------------------
+            if c.get("ring_delete"):
+                clip_args.append("--ring-delete")
+                clip_args.extend(["--max-index", str(max_index)])
+                clip_args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
+                clip_args.extend(["--ring-outer-delta", str(c.get("ring_outer_delta", 0.5))])
+                clip_args.extend(["--ring-inner-delta", str(c.get("ring_inner_delta", 0.3))])
+                if c.get("ring_height_up") is not None:
+                    clip_args.extend(["--ring-height-up", str(c["ring_height_up"])])
+                if c.get("ring_height_down") is not None:
+                    clip_args.extend(["--ring-height-down", str(c["ring_height_down"])])
+            else:
+                clip_args.append("--no-ring-delete")
             _log(f"clip: {' '.join(str(a) for a in clip_args)}")
             result = subprocess.run(
                 clip_args, capture_output=True, text=True,

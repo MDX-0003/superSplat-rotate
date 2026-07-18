@@ -142,6 +142,14 @@ _GROUND_CELL_SIZE = 0.10
 # ground surface.  0.03 works well for typical 3DGS reconstruction noise.
 _GROUND_EPS = 0.03
 
+# Global ground ceiling (percentile of signed_dist, computed from main PLY).
+# Only cells whose per-cell minimum signed_dist is *below* this global
+# percentile can contain actual ground.  Cells whose minimum sits above this
+# threshold contain only person / object points — their "local minimum" is a
+# person body part, NOT ground.  Raising the floor this way prevents the
+# adaptive filter from misclassifying torso / mid-body points as ground.
+_GROUND_MAX_SD_PERCENTILE = 3.0
+
 # Phase 2: cross-PLY residual ground suppression.
 # After Phase 1 removes ground within each non-main PLY, Phase 2 checks
 # surviving points against the MAIN PLY's person footprint: if a non-main
@@ -153,7 +161,8 @@ _PERSON_ABOVE_GROUND = 0.15     # min height above local ground → "person" (m)
 
 
 def _filter_ground_adaptive(verts, center, normal, u1, u2,
-                            effective_r, height_up, height_down):
+                            effective_r, height_up, height_down,
+                            global_ground_max=None):
     """Filter a non-main PLY: remove ground-surface points adaptively.
 
     Uses a grid-based local-minimum algorithm in the 2D projection plane.
@@ -234,6 +243,8 @@ def _filter_ground_adaptive(verts, center, normal, u1, u2,
         ((candidates_sd - local_min) <= _GROUND_EPS) &
         cell_valid[cell_flat]
     )
+    if global_ground_max is not None:
+        is_ground_candidate &= (local_min <= global_ground_max)
 
     # Map back to full point cloud
     ground_mask = np.zeros(verts.shape[0], dtype=bool)
@@ -256,7 +267,8 @@ def _filter_ground_adaptive(verts, center, normal, u1, u2,
 # Phase 2: cross-PLY residual ground suppression
 # ---------------------------------------------------------------------------
 
-def _cross_ply_suppress(main_xyz, filtered_others, center, normal, u1, u2):
+def _cross_ply_suppress(main_xyz, filtered_others, center, normal, u1, u2,
+                        global_ground_max=None):
     """Remove residual ground points from non-main PLYs in cells where the
     main PLY has a person standing.
 
@@ -269,6 +281,9 @@ def _cross_ply_suppress(main_xyz, filtered_others, center, normal, u1, u2):
     is removed when ALL of these hold:
       1. It falls in a cell where main_person is True.
       2. Its signed_dist is within _CROSS_GROUND_EPS of main_ground[cell].
+      3. main_ground[cell] is below *global_ground_max* (optional) — prevents
+         cells that only contain person points (where "ground" is actually a
+         body part) from triggering false-positive removal.
 
     This catches ground points that Phase 1 missed and that sit directly
     under the main PLY's person, where they would cause the most occlusion.
@@ -331,6 +346,8 @@ def _cross_ply_suppress(main_xyz, filtered_others, center, normal, u1, u2):
             main_person[cell_nm] &
             (np.abs(sd_nm - main_ground[cell_nm]) <= cross_eps)
         )
+        if global_ground_max is not None:
+            is_residual &= (main_ground[cell_nm] <= global_ground_max)
 
         n_removed = int(is_residual.sum())
         kept = verts[~is_residual]
@@ -486,8 +503,10 @@ def main():
                              "adaptive grid algorithm isolates and removes the ground surface. "
                              "Typical: 0.3–0.5")
     parser.add_argument("--bias", action="store_true",
-                        default=cfg.get("bias", False),
+                        default=cfg.get("bias", False), dest="bias",
                         help="Enable centroid-based overlap correction for non-main PLYs")
+    parser.add_argument("--no-bias", action="store_false", dest="bias",
+                        help="Disable bias correction (overrides config file)")
     parser.add_argument("--bias-margin", type=float,
                         default=cfg.get("bias_margin", 0.05),
                         help="Extra separation margin in meters between point masses after offset (default: 0.05)")
@@ -622,6 +641,25 @@ def main():
     header_lines, properties, main_verts = read_ply(str(main_path))
     print(f"  {main_verts.shape[0]} points (all kept)")
 
+    # ---- global ground ceiling (from main PLY) ---------------------------
+    # Estimate the signed_dist below which we can be confident that a cell
+    # minimum represents actual ground, not a person body part.  We use the
+    # main PLY because it is kept entirely and therefore has the most
+    # complete ground coverage.  Only cylinder-interior points are used so
+    # that far-away outliers don't pull the percentile into extreme values.
+    main_xyz = main_verts[:, :3]
+    main_sd = (main_xyz - center) @ normal
+    main_radial = np.linalg.norm(main_xyz - np.outer(main_sd, normal) - center, axis=1)
+    main_in_cyl = main_radial <= effective_r
+    main_sd_cyl = main_sd[main_in_cyl]
+    if len(main_sd_cyl) >= 100:
+        global_ground_max = float(np.percentile(main_sd_cyl, _GROUND_MAX_SD_PERCENTILE))
+    else:
+        global_ground_max = float(np.percentile(main_sd, _GROUND_MAX_SD_PERCENTILE))
+    print(f"  Global ground max: {global_ground_max:.4f}  "
+          f"(P{_GROUND_MAX_SD_PERCENTILE:.0f} of main signed_dist inside cylinder, "
+          f"cells with min above this → skip ground detection)")
+
     if other:
         print(f"  Ground strategy  : adaptive grid (Plan A)")
 
@@ -633,6 +671,7 @@ def main():
         kept, stats = _filter_ground_adaptive(
             verts, center, normal, u1, u2,
             effective_r, args.height_up, args.height_down,
+            global_ground_max,
         )
 
         filtered_others.append((kept, ply_label))
@@ -642,11 +681,12 @@ def main():
               f"ceiling:{stats['ceiling_cut']} safety:{stats['safety_cut']}]")
 
     # ----- Phase 2: cross-PLY residual ground suppression -------------------
-    if filtered_others:
-        filtered_others = _cross_ply_suppress(
-            main_verts[:, :3], filtered_others,
-            center, normal, u1, u2,
-        )
+    # if filtered_others:
+    #     filtered_others = _cross_ply_suppress(
+    #         main_verts[:, :3], filtered_others,
+    #         center, normal, u1, u2,
+    #         global_ground_max,
+    #     )
 
     # ----- bias correction (optional) --------------------------------------
     if args.bias and filtered_others:
