@@ -397,11 +397,16 @@ def main():
                         help="[ring-delete] Height below fitted plane for ring deletion (m)")
     parser.add_argument("--files", type=str, default=None,
                         help="Comma-separated filenames to process (default: all .ply files in input)")
+    parser.add_argument("--force", action="store_true",
+                        default=False,
+                        help="Overwrite existing output files instead of skipping")
     args = parser.parse_args(remaining)
 
     if not (0.0 <= args.clip_percent <= 100.0):
         print("ERROR: --clip-percent must be between 0 and 100")
         sys.exit(1)
+
+    clip_pct = args.clip_percent
 
     if args.ring_delete:
         if args.ring_height_up is None or args.ring_height_down is None:
@@ -414,10 +419,10 @@ def main():
             print("ERROR: --ring-inner-delta must be positive")
             sys.exit(1)
 
-    needs_circle = args.ring_delete or (args.denoise and args.denoise_method == "region-grow")
+    needs_circle = args.ring_delete or (args.denoise and args.denoise_method == "region-grow") or clip_pct > 0
     if needs_circle:
         if args.max_index is None:
-            print("ERROR: --ring-delete / --denoise with region-grow requires --max-index")
+            print("ERROR: --ring-delete / --denoise (region-grow) / --clip-percent (>0) requires --max-index")
             sys.exit(1)
 
     if args.denoise and args.denoise_method == "region-grow":
@@ -506,7 +511,6 @@ def main():
         print(f"ERROR: no .ply files found in {proj_dir} or {plys_dir}")
         sys.exit(1)
 
-    clip_pct = args.clip_percent
     keep_frac = 1.0 - clip_pct / 100.0
 
     print(f"Input           : {proj_dir}")
@@ -517,7 +521,7 @@ def main():
     n_skipped = 0
     for ply_path in ply_files:
         out_path = out_dir / ply_path.name
-        if out_path.exists():
+        if out_path.exists() and not args.force:
             print(f"\n  SKIP: {ply_path.name} — already in {out_dir.name}/")
             n_skipped += 1
             continue
@@ -543,13 +547,35 @@ def main():
         # SuperSplat.  True volume = exp(s0)*exp(s1)*exp(s2) = exp(s0+s1+s2).
         # Since exp() is monotonic, sorting by sum of log-scales gives the
         # same ranking without float-overflow risk.
-        volume = verts[:, s0] + verts[:, s1] + verts[:, s2]
+        # volume = verts[:, s0] + verts[:, s1] + verts[:, s2]
+        volume = verts[:, [s0, s1, s2]].max(axis=1) 
 
         if clip_pct <= 0:
             clipped = verts
+        elif center is not None:
+            # Only clip points inside the fitted cylinder — peripheral
+            # points outside the region of interest are left untouched.
+            xyz = verts[:, :3]
+            sd = (xyz - center) @ normal
+            proj = xyz - np.outer(sd, normal)
+            r = np.linalg.norm(proj - center, axis=1)
+            # Use denoise height if available, otherwise no height cutoff
+            h_up = args.height_up if args.height_up is not None else 1e9
+            h_dn = args.height_down if args.height_down is not None else 1e9
+            in_cyl = (r <= effective_r) & (sd >= -h_dn) & (sd <= h_up)
+            cyl_idx = np.where(in_cyl)[0]
+            if len(cyl_idx) > 0:
+                cyl_vol = volume[cyl_idx]
+                order = np.argsort(-cyl_vol)
+                n_remove = int(len(cyl_idx) * clip_pct / 100.0)
+                remove_idx = cyl_idx[order[:n_remove]]
+                keep_mask = np.ones(n_orig, dtype=bool)
+                keep_mask[remove_idx] = False
+                clipped = verts[keep_mask]
+            else:
+                clipped = verts
         else:
-            # sort descending by volume (largest first);
-            # skip the first n_remove (largest), keep the rest (= smallest)
+            # No circle — fall back to global volume clip
             order = np.argsort(-volume)
             n_remove = int(n_orig * clip_pct / 100.0)
             keep_idx = order[n_remove:]

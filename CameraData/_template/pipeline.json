@@ -8,7 +8,7 @@
     "5. 修改 distributed.training.* 为训练参数"
   ],
   "project": "01",
-  "preset": "通用合并方案",
+  "preset": "明亮场景",
   "raw_images_path": "Z:/Test-Raw-Images",
   "video_output_path": "Y:/0717/风暴时刻输出",
   "jsons_path": "D:/UE/JustATest/Content/JSON_Out",

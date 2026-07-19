@@ -457,6 +457,8 @@ def _build_ssh_cmd(worker: WorkerNode, remote_command: str) -> list[str]:
     # Disable strict host key checking for automation
     cmd.extend(["-o", "StrictHostKeyChecking=accept-new"])
     cmd.extend(["-o", "ConnectTimeout=10"])
+    # Never prompt for passwords/passphrases; fail immediately instead of hanging
+    cmd.extend(["-o", "BatchMode=yes"])
     cmd.append(worker.ssh_target)
     cmd.append(remote_command)
     return cmd
@@ -505,12 +507,14 @@ def ssh_run_async(worker: WorkerNode, command: str) -> subprocess.Popen:
         # Windows list2cmdline mangling of an already-quoted command.
         return subprocess.Popen(
             command, shell=True,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
         )
     else:
         return subprocess.Popen(
             _build_ssh_cmd(worker, command),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
         )

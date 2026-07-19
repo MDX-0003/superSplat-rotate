@@ -988,8 +988,8 @@ def main_loop(state: TrainState, cfg: dict,
                             if image_names:
                                 # Ensure target subdirectory exists on the remote worker
                                 ssh_run(best_worker,
-                                        f'mkdir -p "{worker_data / fs.dirname}"',
-                                        timeout=30)
+                                        f'mkdir "{worker_data / fs.dirname}"',
+                                        timeout=10)
                                 # send individual image files (skip non-image clutter)
                                 src_paths = [str(src / name) for name in image_names]
                                 ok = scp_send_multi(best_worker, src_paths, worker_data_str)

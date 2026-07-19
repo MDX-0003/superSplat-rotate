@@ -364,7 +364,7 @@ def build_fuse_page(state: FuseState) -> str:
     <!-- Fuse column -->
     <div class="col">
       <h2>Fuse PLYs（顺序敏感）</h2>
-      <div class="render-table-wrap">
+      <div class="render-table-wrap" id="fuse-table-wrap">
       <div class="preview-bar" id="preview-bar" style="display:none">
         <span class="label">选中顺序:</span>
         <span id="preview-order"></span>
@@ -385,7 +385,8 @@ def build_fuse_page(state: FuseState) -> str:
         Preset:
         <select id="fuse-preset" style="margin:4px 0;padding:2px 6px;
                border:1px solid #d9cfb8;border-radius:3px;font-size:12px;
-               background:#fffdf7">
+               background:#fffdf7"
+               onchange="localStorage.setItem('fuse-selected-preset', this.value)">
           {_preset_options_html(state)}
         </select>
       </label>
@@ -463,11 +464,31 @@ def build_fuse_page(state: FuseState) -> str:
         bar.style.display = 'none';
       }} else {{
         bar.style.display = 'flex';
-        let gidxs = fuseOrder.map(f => '[' + f.gidx + ']');
-        orderEl.textContent = gidxs.join(' → ');
-        // combine name uses global indices (matching fuse_ply.py output)
-        let idxs = fuseOrder.map(f => f.gidx);
-        pathEl.textContent = 'combine-' + idxs.join('-') + '.ply';
+        // Build combine name from time-code labels (matching fuse_ply.py output)
+        let names = fuseOrder.map(f => f.name);
+        // longest common prefix
+        let lcp = names[0];
+        for (let n of names.slice(1)) {{
+          while (!n.startsWith(lcp)) {{
+            lcp = lcp.slice(0, -1);
+            if (!lcp) break;
+          }}
+        }}
+        // Step back to last '-' or '_' so time codes stay intact
+        for (let i = lcp.length - 1; i >= 0; i--) {{
+          if (lcp[i] === '-' || lcp[i] === '_') {{
+            lcp = lcp.slice(0, i + 1);
+            break;
+          }}
+        }}
+        let labels = names.map(n => {{
+          let s = n.slice(lcp.length);
+          if (s.endsWith('.ply')) s = s.slice(0, -4);
+          return s;
+        }});
+        orderEl.textContent = labels.join(' → ');
+        let cleanPrefix = lcp.replace(/[0-9]+$/g, '');
+        pathEl.textContent = (cleanPrefix || '') + 'combine-' + labels.join('-') + '.ply';
       }}
     }}
 
@@ -725,6 +746,15 @@ def build_fuse_page(state: FuseState) -> str:
         }}
       }}
     }})();
+    // Restore last-used preset from localStorage
+    let savedPreset = localStorage.getItem('fuse-selected-preset');
+    if (savedPreset) {{
+      let sel = document.getElementById('fuse-preset');
+      if (sel) sel.value = savedPreset;
+    }}
+    // Scroll fuse PLY list to bottom on load (最新在上，列表默认看最新)
+    let ftw = document.getElementById('fuse-table-wrap');
+    if (ftw) ftw.scrollTop = ftw.scrollHeight;
   </script>
 
   <!-- Preset Editor Modal -->
@@ -878,6 +908,9 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         if f.get("bias"):
             fuse_args.append("--bias")
             fuse_args.extend(["--bias-margin", str(f.get("bias_margin", 0.05))])
+            fuse_args.extend(["--bias-radius-percentile", str(f.get("bias_radius_percentile", 100))])
+        else:
+            fuse_args.append("--no-bias")
 
         _log(f"fuse: {' '.join(str(a) for a in fuse_args)}")
         result = subprocess.run(
@@ -915,7 +948,10 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                 sys.executable, str(clip_script),
                 "--path", proj_path,
                 "--files", new_combine.name,
+                "--force",
                 "--clip-percent", str(c.get("clip_percent", 10.0)),
+                "--max-index", str(max_index),
+                "--radius-scale", str(c.get("radius_scale", 1.0)),
             ]
             # -- denoise --------------------------------------------------
             if c.get("denoise"):
@@ -924,8 +960,6 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                 clip_args.extend(["--denoise-min-points", str(c.get("denoise_min_points", 30))])
                 clip_args.extend(["--denoise-grid-cell", str(c.get("denoise_grid_cell", 0.15))])
                 clip_args.extend(["--denoise-voxel-size", str(c.get("denoise_voxel_size", 0.30))])
-                clip_args.extend(["--max-index", str(max_index)])
-                clip_args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
                 if c.get("height_up") is not None:
                     clip_args.extend(["--height-up", str(c["height_up"])])
                 if c.get("height_down") is not None:
@@ -935,8 +969,6 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             # -- ring delete ----------------------------------------------
             if c.get("ring_delete"):
                 clip_args.append("--ring-delete")
-                clip_args.extend(["--max-index", str(max_index)])
-                clip_args.extend(["--radius-scale", str(c.get("radius_scale", 1.0))])
                 clip_args.extend(["--ring-outer-delta", str(c.get("ring_outer_delta", 0.5))])
                 clip_args.extend(["--ring-inner-delta", str(c.get("ring_inner_delta", 0.3))])
                 if c.get("ring_height_up") is not None:
@@ -957,6 +989,10 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                 _log("clip 完成")
             else:
                 _log(f"CLIP FAILED (exit {result.returncode})")
+                if result.stderr:
+                    for line in result.stderr.split("\n"):
+                        if line.strip():
+                            _log(f"[stderr] {line}")
 
     except subprocess.TimeoutExpired:
         _log("TIMEOUT: fuse+clip 超时 (1h)")
@@ -1030,7 +1066,13 @@ def run_render(state: FuseState, cfg: dict,
                 else proj_dir / "renders"
             )
             renders_dir.mkdir(parents=True, exist_ok=True)
-            expected_filename = f"{proj_name}.mp4"
+            # Build video filename from PLY suffix: "03-221842-221919.mp4"
+            ply_stem = ply_path.stem
+            if "-combine-" in ply_stem:
+                suffix = ply_stem.split("-combine-", 1)[1]
+            else:
+                suffix = ply_stem.split("-", 1)[1] if "-" in ply_stem else ""
+            expected_filename = f"{proj_name}-{suffix}.mp4" if suffix else f"{proj_name}.mp4"
             success = await render_video(page, total_frames, renders_dir,
                                          expected_filename, fps)
             if success:

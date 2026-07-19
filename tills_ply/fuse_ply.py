@@ -129,6 +129,36 @@ def longest_common_prefix(strings):
     return prefix
 
 
+def _output_prefix_and_labels(names):
+    """Compute output prefix and time-code labels from selected PLY filenames.
+
+    Unlike ``longest_common_prefix``, the prefix stops at the last ``-`` or
+    ``_`` so that HHMMSS time codes are never partially consumed.  The labels
+    are the stem parts after the prefix (minus ``.ply``).
+
+    Returns ``(prefix, labels)``.  Example::
+
+        _output_prefix_and_labels(["0718-153234.ply", "0718-153248.ply"])
+        → ("0718-", ["153234", "153248"])
+    """
+    full_prefix = longest_common_prefix(names)
+    # Step back to the last separator so time codes stay intact
+    for i in range(len(full_prefix) - 1, -1, -1):
+        if full_prefix[i] in "-_":
+            prefix = full_prefix[:i + 1]
+            break
+    else:
+        prefix = full_prefix
+    # Extract labels: strip prefix + ".ply"
+    labels = []
+    for name in names:
+        s = name[len(prefix):]
+        if s.endswith(".ply"):
+            s = s[:-4]
+        labels.append(s)
+    return prefix, labels
+
+
 # ---------------------------------------------------------------------------
 # adaptive ground-surface filter (grid-based local-minimum detection)
 # ---------------------------------------------------------------------------
@@ -622,9 +652,10 @@ def main():
         print(f"Other PLYs: {other_labels}  -- cylinder-filtered")
     else:
         # single PLY — nothing to fuse, just copy
-        clean_prefix = common_prefix.rstrip("0123456789")
+        sel_prefix, labels = _output_prefix_and_labels([main_path.name])
+        clean_prefix = sel_prefix.rstrip("0123456789")
         base = f"{clean_prefix}combine" if clean_prefix else "combine"
-        subfix = args.output_subfix if args.output_subfix else "-".join(str(i) for i in selected)
+        subfix = args.output_subfix if args.output_subfix else labels[0]
         out_name = f"{base}-{subfix}.ply"
         out_path = proj_dir / out_name
         print(f"\n  [fuse] 仅 1 个 PLY — 跳过合并，直接复制")
@@ -695,10 +726,13 @@ def main():
 
     # ----- write output ----------------------------------------------------
     vertex_blocks = [main_verts] + [v for v, _ in filtered_others]
-    # strip trailing digits so "0613-23" -> "0613-"
-    clean_prefix = common_prefix.rstrip("0123456789")
+    # Compute prefix from selected PLYs only, with separator-aware trimming
+    # so HHMMSS time codes are never partially consumed.
+    sel_names = [main_path.name] + [p.name for p, _ in other]
+    sel_prefix, labels = _output_prefix_and_labels(sel_names)
+    clean_prefix = sel_prefix.rstrip("0123456789")
     base = f"{clean_prefix}combine" if clean_prefix else "combine"
-    subfix = args.output_subfix if args.output_subfix else "-".join(str(i) for i in selected)
+    subfix = args.output_subfix if args.output_subfix else "-".join(labels)
     out_name = f"{base}-{subfix}.ply"
     out_path = proj_dir / out_name
 
