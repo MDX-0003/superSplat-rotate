@@ -604,13 +604,16 @@ def run_generate_cali(state: TrainState, key: str, sub_dir: str,
         if backup:
             _log(f"已有标定数据已备份至: {backup}")
 
-        # Copy frame images to calibration directory
-        cali_dir.mkdir(parents=True, exist_ok=True)
+        # Copy frame images to calibration directory (under a frame-named
+        # subdirectory so prepare_calibration.py can auto-detect the frame_id
+        # for naming the output log)
+        cali_frame_dir = cali_dir / dirname
+        cali_frame_dir.mkdir(parents=True, exist_ok=True)
         IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
         image_count = 0
         for img in sorted(frame_dir.iterdir()):
             if img.is_file() and img.suffix.lower() in IMG_EXTS:
-                shutil.copy2(str(img), str(cali_dir / img.name))
+                shutil.copy2(str(img), str(cali_frame_dir / img.name))
                 image_count += 1
         _log(f"已拷贝 {image_count} 张图片到 {cali_dir}")
 
