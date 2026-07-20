@@ -345,11 +345,22 @@ def resolve_config_path(raw: str) -> Path:
 _TEMPLATE_DIR = _CAMERA_DATA / "_template"
 
 
+def _replace_placeholder(obj, project_name: str):
+    """Recursively replace ``{project_name}`` in all string values of *obj*."""
+    if isinstance(obj, str):
+        return obj.replace("{project_name}", project_name)
+    if isinstance(obj, dict):
+        return {k: _replace_placeholder(v, project_name) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_replace_placeholder(v, project_name) for v in obj]
+    return obj
+
+
 def init_project(project_name: str) -> None:
     """Create CameraData/<project_name>/ from _template files.
 
     Copies pipeline.json and workers.json from the template directory,
-    modifying ``project`` and ``raw_images_path`` in pipeline.json.
+    replacing ``{project_name}`` placeholders in all string fields.
     Errors out if the target directory already exists.
     """
     proj_dir = Path(__file__).resolve().parent.parent.parent / "CameraData" / project_name
@@ -361,13 +372,12 @@ def init_project(project_name: str) -> None:
     proj_dir.mkdir(parents=True)
     print(f"创建目录: {proj_dir}")
 
-    # ── pipeline.json (modify project + raw_images_path) ──
+    # ── pipeline.json (replace {project_name} placeholders) ──
     src_pipeline = _TEMPLATE_DIR / "pipeline.json"
     if src_pipeline.exists():
         with open(src_pipeline, "r", encoding="utf-8") as f:
             cfg = json.load(f)
-        cfg["project"] = project_name
-        cfg["raw_images_path"] = f"CameraData/{project_name}/raw_images"
+        cfg = _replace_placeholder(cfg, project_name)
         dst = proj_dir / "pipeline.json"
         with open(dst, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
