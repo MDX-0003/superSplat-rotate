@@ -267,19 +267,23 @@ _JS_SSE = """
     let selected = document.querySelector('input[name="cali-frame"]:checked');
     let caliRunning = document.getElementById('cali-status').style.display !== 'none';
     let btnGen = document.getElementById('btn-cali-gen');
+    let btnGenSeq = document.getElementById('btn-cali-gen-seq');
     let btnDist = document.getElementById('btn-cali-dist');
     let startBtn = document.getElementById('btn-scan-start');
     if (caliRunning) {
       btnGen.disabled = true;
+      btnGenSeq.disabled = true;
       btnDist.disabled = true;
       startBtn.disabled = true;
     } else {
       btnGen.disabled = !(scanningStopped && selected);
+      btnGenSeq.disabled = !(scanningStopped && selected);
       btnDist.disabled = !(scanningStopped && selected);
       startBtn.disabled = false;
     }
   }
-  function doGenerateCali() {
+  function doGenerateCali(sequential) {
+    sequential = sequential || false;
     let selected = document.querySelector('input[name="cali-frame"]:checked');
     if (!selected) { alert('请选择一个帧'); return; }
     let key = selected.value;
@@ -288,7 +292,7 @@ _JS_SSE = """
     updateCaliButton();
     fetch('/action', {method:'POST',
      headers:{'Content-Type':'application/json'},
-     body: JSON.stringify({action: 'generate_cali', key: key, dirname: dirname})
+     body: JSON.stringify({action: 'generate_cali', key: key, dirname: dirname, sequential: sequential})
     }).then(r => r.json()).then(d => {
       if (d.status !== 'ok') {
         document.getElementById('cali-status').style.display = 'none';
@@ -381,8 +385,10 @@ def build_page(state: TrainState) -> str:
     <span id="scan-status" style="font-size:14px;color:{'#2e7d32' if d['training_enabled'] else '#c0392b'}">{'● 训练中...' if d['training_enabled'] else '● 训练已暂停'}</span>
     <span style="flex:1"></span>
     <span id="cali-status" style="font-size:13px;color:#1565c0;{('' if d['cali_running'] else 'display:none')}">🔄 标定中...</span>
-    <button id="btn-cali-gen" onclick="doGenerateCali()"
+    <button id="btn-cali-gen" onclick="doGenerateCali(false)"
             style="background:#1565c0;padding:8px 18px;font-size:14px" disabled>📷 生成位姿</button>
+    <button id="btn-cali-gen-seq" onclick="doGenerateCali(true)"
+            style="background:#1565c0;padding:8px 18px;font-size:14px" disabled>📷 生成位姿（sequential）</button>
     <button id="btn-cali-dist" onclick="doDistributeCali()"
             style="background:#6b8e6b;padding:8px 18px;font-size:14px" disabled>📡 分发位姿</button>
   </div>
@@ -429,6 +435,7 @@ def handle_action(state: TrainState, body: dict,
     if action == "generate_cali":
         key = body.get("key", "")
         dirname = body.get("dirname", "")
+        sequential = body.get("sequential", False)
         if not key or not dirname:
             return {"status": "error", "message": "缺少帧信息"}
         try:
@@ -439,7 +446,7 @@ def handle_action(state: TrainState, body: dict,
         state.cali_running = True
         t = threading.Thread(
             target=run_generate_cali,
-            args=(state, key, sub_dir, dirname, cfg, broadcaster),
+            args=(state, key, sub_dir, dirname, sequential, cfg, broadcaster),
             daemon=True,
         )
         t.start()
@@ -566,8 +573,12 @@ def _backup_cali_dir(cali_dir: Path, backup_root: Path, sub_dir: str) -> Path | 
 # ── Calibration background tasks ────────────────────────────────────────────────────
 
 def run_generate_cali(state: TrainState, key: str, sub_dir: str,
-                      dirname: str, cfg: dict, broadcaster):
-    """Background thread: backup old cali → copy images → run COLMAP."""
+                      dirname: str, sequential: bool, cfg: dict, broadcaster):
+    """Background thread: backup old cali → copy images → run COLMAP.
+
+    If *sequential* is True, passes --sequential to prepare_calibration.py
+    for sequential matcher instead of exhaustive matcher.
+    """
     litegs_path = Path(cfg.get("litegs_path", ""))
     cali_root = litegs_path / "data" / "calibration"
     old_cali_root = litegs_path / "data" / "old-cali"
@@ -613,6 +624,8 @@ def run_generate_cali(state: TrainState, key: str, sub_dir: str,
             "uv", "run", "python", str(script),
             "--sub_dir", sub_dir,
         ]
+        if sequential:
+            cmd.append("--sequential")
         _log(f"执行: {' '.join(cmd)}")
         proc = subprocess.Popen(
             cmd, cwd=str(litegs_path),
