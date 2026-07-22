@@ -8,6 +8,7 @@
     "5. 修改 distributed.training.* 为训练参数"
   ],
   "project": "{project_name}",
+  
   "preset": "明亮场景",
   "raw_images_path": "Y:/{project_name}/关键帧",
   "video_output_path": "Y:/{project_name}/风暴时刻输出",

@@ -762,6 +762,10 @@ def main_loop(state: TrainState, cfg: dict,
     proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
     raw_dir = Path(cfg.get("raw_images_path", proj_dir / "raw_images"))
     img_num = cfg.get("img_num")
+    # Optional: only process directories whose numeric prefix matches this value.
+    # e.g. "130" → only "130-*" dirs are included, "90-*" dirs are skipped.
+    frame_count_prefix = cfg.get("frame_count_prefix")
+    frame_count_prefix_str = str(frame_count_prefix) if frame_count_prefix is not None else None
 
     # Ring buffer for worker logs: worker_id → list of lines
     log_buffers: dict[str, list[str]] = defaultdict(list)
@@ -824,6 +828,9 @@ def main_loop(state: TrainState, cfg: dict,
                     # 仅纳入第一个"-"之前为纯数字的目录
                     prefix = fd.name.split("-")[0]
                     if not prefix.isdigit():
+                        continue
+                    # 可选：只处理指定前缀的帧（如 "130" 只纳入 130-* 目录）
+                    if frame_count_prefix_str is not None and prefix != frame_count_prefix_str:
                         continue
 
                     scanned += 1
