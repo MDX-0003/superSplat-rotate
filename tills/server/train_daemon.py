@@ -345,7 +345,7 @@ def build_page(state: TrainState) -> str:
           <td><input type="radio" name="cali-frame" value="{f['key']}"
                      data-dirname="{f['dirname']}"
                      onchange="updateCaliButton()"></td>
-          <td>{f['frame_id']}</td>
+          <td>{f['dirname']}</td>
           <td><span class="st-{f['status']}">{f['status']}</span></td>
           <td>{f['worker_id'] or '—'}</td>
           <td>{iter_str}</td>
@@ -755,7 +755,8 @@ def main_loop(state: TrainState, cfg: dict,
               broadcaster: SSEBroadcaster, logger: FileLogger,
               force: bool,
               frames_filter: list[str] | None,
-              stop_event: threading.Event):
+              stop_event: threading.Event,
+              quiet: bool = False):
     """The infinite polling loop. Runs in a background thread."""
 
     proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
@@ -924,8 +925,9 @@ def main_loop(state: TrainState, cfg: dict,
                     msg = (f"scan #{_cycle}: {scanned} dirs | "
                            f"ready={ready} training={training} "
                            f"done={done} failed={failed}")
-                    print(f"  [{msg}]")
-                    _emit_log("daemon", msg)
+                    if not quiet:
+                        print(f"  [{msg}]")
+                        _emit_log("daemon", msg)
 
                 # Cleanup frames whose raw_images directory was deleted
                 active_keys = set()
@@ -1268,6 +1270,8 @@ def main():
                         help="Re-train even if PLY exists")
     parser.add_argument("--frames", nargs="*", default=None,
                         help="Only monitor these frames")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress heartbeat scan summaries in terminal and logs")
     args_p = parser.parse_args()
 
     # Load config
@@ -1343,7 +1347,7 @@ def main():
     loop_thread = threading.Thread(
         target=main_loop,
         args=(state, cfg, broadcaster, logger,
-              args_p.force, args_p.frames, stop_event),
+              args_p.force, args_p.frames, stop_event, args_p.quiet),
         daemon=True,
     )
     loop_thread.start()

@@ -90,6 +90,9 @@ def main():
     parser.add_argument("--output", type=str, default=None)
     parser.add_argument("--radius-scale", type=float, default=1.0,
                         help="Scale the ellipse radii (1.0 = original, >1 = wider orbit, <1 = tighter)")
+    parser.add_argument("--height-offset", type=float, default=0.0,
+                        help="Shift the entire circle along the plane normal (metres). "
+                             "Positive = toward normal direction, negative = opposite.")
     args = parser.parse_args()
 
     proj = proj_dir(args.project)
@@ -194,10 +197,18 @@ def main():
 
     sample_radii = np.array([radius_at_angle(a) * scale for a in sample_angles])
 
+    # optional height offset along plane normal
+    height_offset = args.height_offset
+    if height_offset != 0.0:
+        print(f"Height offset   : {height_offset:.4f} m  (along normal [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}])")
+
     # ----- 3D positions --------------------------------------------------
     sample_positions = []
     for a, r in zip(sample_angles, sample_radii):
-        sample_positions.append(angle_to_3d(a, r, center, u1, u2))
+        pos = angle_to_3d(a, r, center, u1, u2)
+        if height_offset != 0.0:
+            pos = pos + normal * height_offset
+        sample_positions.append(pos)
 
     # ----- rotations: blend of look-at + anchor slerp --------------------
     R_a = np.array(anchor_a["rotation"])

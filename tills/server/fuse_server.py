@@ -624,6 +624,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-total', p.interpolate?.total);
       pmSet('pm-i-anchor_camera', p.interpolate?.anchor_camera, false, true);
       pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
+      pmSet('pm-i-height_offset', p.interpolate?.height_offset);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
       pmToggleDenoise(); pmToggleRing();
@@ -663,6 +664,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.interpolate.total=pI('pm-i-total');
       params.interpolate.anchor_camera=document.getElementById('pm-i-anchor_camera').value;
       params.interpolate.radius_scale=pF('pm-i-radius_scale');
+      params.interpolate.height_offset=pF('pm-i-height_offset');
       let r=await fetch('/presets/save',{{method:'POST',
        headers:{{'Content-Type':'application/json'}},
        body:JSON.stringify({{name:pmName,params:params}})}});
@@ -811,6 +813,7 @@ def build_fuse_page(state: FuseState) -> str:
           <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
           <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
+          <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
         </div>
       </div>
     </div>
@@ -876,6 +879,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             "--total", str(ip.get("total", 300)),
             "--anchor-camera", str(ip.get("anchor_camera", "006")),
             "--radius-scale", str(ip.get("radius_scale", 1.0)),
+            "--height-offset", str(ip.get("height_offset", 0.0)),
         ]
         _log(f"interpolate: {' '.join(str(a) for a in interp_args)}")
         result = subprocess.run(
@@ -1232,6 +1236,8 @@ def _build_presets_page() -> str:
         <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
       <div class="field"><label>radius_scale</label>
         <input type="text" id="i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
+      <div class="field"><label>height_offset (m)</label>
+        <input type="text" id="i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移高度。正值=法线方向,负值=反方向</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
@@ -1284,6 +1290,7 @@ def _build_presets_page() -> str:
       setVal('i-total', p.interpolate?.total);
       setVal('i-anchor_camera', p.interpolate?.anchor_camera, false, true);
       setVal('i-radius_scale', p.interpolate?.radius_scale);
+      setVal('i-height_offset', p.interpolate?.height_offset);
       toggleBias(); toggleDenoise(); toggleRing();
     }}
 
@@ -1371,6 +1378,7 @@ def _build_presets_page() -> str:
       params.interpolate.total = intVal('i-total');
       params.interpolate.anchor_camera = document.getElementById('i-anchor_camera').value;
       params.interpolate.radius_scale = floatVal('i-radius_scale');
+      params.interpolate.height_offset = floatVal('i-height_offset');
       return params;
     }}
 
