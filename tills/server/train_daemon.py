@@ -582,7 +582,8 @@ def run_generate_cali(state: TrainState, key: str, sub_dir: str,
     litegs_path = Path(cfg.get("litegs_path", ""))
     cali_root = litegs_path / "data" / "calibration"
     old_cali_root = litegs_path / "data" / "old-cali"
-    raw_dir = Path(cfg.get("raw_images_path", ""))
+    proj_dir = (ROOT / f"CameraData/{cfg['project']}").resolve()
+    raw_dir = Path(cfg.get("raw_images_path", proj_dir / "raw_images"))
     frame_dir = raw_dir / dirname
 
     def _log(msg: str):
