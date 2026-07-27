@@ -21,6 +21,27 @@ from typing import Callable
 
 # ── File-based logger (shared by train_daemon and fuse_server) ────────────────────
 
+class _TeeStream:
+    """Writes to two streams simultaneously — used to capture all print()
+    output into a console.log file while still showing it on screen."""
+
+    def __init__(self, original, file_handle):
+        self.original = original
+        self.file = file_handle
+
+    def write(self, data):
+        self.original.write(data)
+        self.file.write(data)
+
+    def flush(self):
+        self.original.flush()
+        self.file.flush()
+
+    def fileno(self):
+        """Forward fileno so subprocess / os.write don't break."""
+        return self.original.fileno()
+
+
 class FileLogger:
     """Thread-safe file logger with one handle per named stream.
 
@@ -42,7 +63,40 @@ class FileLogger:
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._handles: dict[str, object] = {}
         self._write_lock = threading.Lock()
+        self._capture_handle = None
+        self._original_stdout = None
+        self._original_stderr = None
         print(f"  logs → {self._log_dir}")
+
+    def start_capture(self):
+        """Redirect sys.stdout + sys.stderr to also write to ``console.log``.
+
+        Call once after construction and before any work starts.  Safe to
+        call even when already capturing (no-op on second call).
+        """
+        if self._capture_handle is not None:
+            return  # already capturing
+        path = self._log_dir / "console.log"
+        self._capture_handle = open(path, "a", encoding="utf-8", buffering=1)
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        sys.stdout = _TeeStream(self._original_stdout, self._capture_handle)
+        sys.stderr = _TeeStream(self._original_stderr, self._capture_handle)
+
+    def stop_capture(self):
+        """Restore original sys.stdout / sys.stderr (called by ``close()``)."""
+        if self._original_stdout is not None:
+            sys.stdout = self._original_stdout
+            self._original_stdout = None
+        if self._original_stderr is not None:
+            sys.stderr = self._original_stderr
+            self._original_stderr = None
+        if self._capture_handle is not None:
+            try:
+                self._capture_handle.close()
+            except Exception:
+                pass
+            self._capture_handle = None
 
     def write(self, name: str, line: str):
         """Append a timestamped line to ``<name>.log`` (thread-safe)."""
@@ -57,6 +111,7 @@ class FileLogger:
             f.flush()
 
     def close(self):
+        self.stop_capture()
         for h in self._handles.values():
             try:
                 h.close()

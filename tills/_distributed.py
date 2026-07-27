@@ -696,14 +696,25 @@ def scp_send_multi(worker: WorkerNode, local_paths: list[str],
         scp_args.extend(["-P", str(worker.ssh_port)])
     scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
     scp_args.extend(["-o", "ConnectTimeout=10"])
+    scp_args.extend(["-o", "BatchMode=yes"])
     scp_args.extend(local_paths)
     scp_args.append(remote_target)
 
     try:
         result = _sp.run(scp_args, capture_output=True, text=True,
                          encoding="utf-8", errors="replace", timeout=600)
-        return result.returncode == 0
-    except Exception:
+        if result.returncode == 0:
+            return True
+        # Log failure details so we can diagnose
+        print(f"[scp] FAILED (exit {result.returncode}): "
+              f"{' '.join(scp_args)}", file=sys.stderr)
+        if result.stderr:
+            print(f"[scp] stderr: {result.stderr.strip()}", file=sys.stderr)
+        if result.stdout:
+            print(f"[scp] stdout: {result.stdout.strip()}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"[scp] EXCEPTION: {e}", file=sys.stderr)
         return False
 
 
@@ -723,14 +734,25 @@ def scp_recv_multi(worker: WorkerNode, remote_paths: list[str],
         scp_args.extend(["-P", str(worker.ssh_port)])
     scp_args.extend(["-o", "StrictHostKeyChecking=accept-new"])
     scp_args.extend(["-o", "ConnectTimeout=10"])
+    scp_args.extend(["-o", "BatchMode=yes"])
     scp_args.extend([f"{remote_src}{rp}" for rp in remote_paths])
     scp_args.append(str(local_dst))
 
     try:
         result = _sp.run(scp_args, capture_output=True, text=True,
                          encoding="utf-8", errors="replace", timeout=600)
-        return result.returncode == 0
-    except Exception:
+        if result.returncode == 0:
+            return True
+        # Log failure details so we can diagnose
+        print(f"[scp] FAILED (exit {result.returncode}): "
+              f"{' '.join(scp_args)}", file=sys.stderr)
+        if result.stderr:
+            print(f"[scp] stderr: {result.stderr.strip()}", file=sys.stderr)
+        if result.stdout:
+            print(f"[scp] stdout: {result.stdout.strip()}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"[scp] EXCEPTION: {e}", file=sys.stderr)
         return False
 
 
