@@ -282,6 +282,7 @@ def build_interpolate_args(preset):
         "--anchor-camera", str(ip.get("anchor_camera", "006")),
         "--radius-scale", str(ip.get("radius_scale", 1.0)),
         "--height-offset", str(ip.get("height_offset", 0.0)),
+        "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
     ]
     return args
 

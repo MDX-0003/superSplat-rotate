@@ -96,6 +96,9 @@ def main():
     parser.add_argument("--height-offset", type=float, default=0.0,
                         help="Shift the entire circle along the plane normal (metres). "
                              "Positive = toward normal direction, negative = opposite.")
+    parser.add_argument("--pitch-offset", type=float, default=0.0,
+                        help="Rotate every camera around its own right-axis by this many "
+                             "degrees. Positive = look up, negative = look down.")
     args = parser.parse_args()
 
     # ----- resolve project directory --------------------------------------
@@ -146,6 +149,18 @@ def main():
     print(f"Circle center   : [{center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f}]")
     print(f"Fit radius      : {r_fit:.4f}")
     print(f"Plane normal    : [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
+
+    # ----- ensure normal aligns with camera 'down' direction ------------
+    # COLMAP convention: R = [right, down, forward].  The look-at helper
+    # needs world_up to point roughly towards the R[:,1] (= 'down') axis so
+    # that cross(world_up, forward) yields a right vector consistent with
+    # the actual camera extrinsics.  SVD defines normal only up to sign
+    # — we flip it when it points away from the consensus camera-down direction.
+    cam_downs = np.array([np.array(d["rotation"])[:, 1] for d in data])
+    avg_down = np.mean(cam_downs, axis=0)
+    if np.dot(normal, avg_down) < 0:
+        normal = -normal
+        print(f"Normal flipped (align with camera down): [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
 
     # ----- pick anchors: anchor camera + auto max-angular-distance mate ----
     all_angles = []
@@ -269,6 +284,13 @@ def main():
 
         rot = rot_look * residual
         sample_rots.append(rot.as_matrix())
+
+    # ----- optional pitch offset -----------------------------------------
+    if args.pitch_offset != 0.0:
+        pitch_rad = np.radians(args.pitch_offset)
+        pitch_R = Rotation.from_rotvec([pitch_rad, 0, 0])  # rotate around X (right axis)
+        print(f"Pitch offset    : {args.pitch_offset:.4f} deg  (around camera right-axis)")
+        sample_rots = [(Rotation.from_matrix(R) * pitch_R).as_matrix() for R in sample_rots]
 
     # ----- intrinsics ----------------------------------------------------
     fx_a, fy_a = anchor_a["fx"], anchor_a["fy"]

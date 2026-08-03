@@ -668,7 +668,7 @@ def run_distribute_cali(state: TrainState, key: str, sub_dir: str,
         if broadcaster:
             broadcaster.broadcast("log", f"daemon [dist:{key}] {msg}")
 
-    _log(f"开始分发音位: sub_dir={sub_dir}")
+    _log(f"开始向副机分发位姿: sub_dir={sub_dir}")
 
     try:
         # 1. Verify host calibration is complete
@@ -725,7 +725,7 @@ def run_distribute_cali(state: TrainState, key: str, sub_dir: str,
             else:
                 _log(f"ERROR: {w.id} SCP 失败")
 
-        _log("分发音位完成")
+        _log("全部副机位姿分发完成")
 
     except Exception as e:
         _log(f"ERROR: {e}")
