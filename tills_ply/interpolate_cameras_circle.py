@@ -99,6 +99,8 @@ def main():
     parser.add_argument("--pitch-offset", type=float, default=0.0,
                         help="Rotate every camera around its own right-axis by this many "
                              "degrees. Positive = look up, negative = look down.")
+    parser.add_argument("--fov-x", type=float, default=80.0,
+                        help="Horizontal FOV in degrees for all output cameras (default: 80.0)")
     args = parser.parse_args()
 
     # ----- resolve project directory --------------------------------------
@@ -336,7 +338,7 @@ def main():
                          for row in sample_rots[i]],
             "fy": round(float(sample_fy[i]), 6),
             "fx": round(float(sample_fx[i]), 6),
-            "fov_x": 80.0,
+            "fov_x": round(args.fov_x, 6),
         })
 
     with open(output_path, "w") as f:

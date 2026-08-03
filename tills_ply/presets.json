@@ -8,9 +8,10 @@
             "interpolate": {
                 "total": 160,
                 "anchor_camera": "001",
-                "radius_scale": 0.8,
+                "radius_scale": 0.9,
                 "height_offset": 0,
-                "pitch_offset": 7
+                "pitch_offset": 1,
+                "fov_x": 68
             },
             "fuse": {
                 "radius_scale": 0.8,
@@ -27,7 +28,7 @@
                 "output_subfix": ""
             },
             "clip": {
-                "clip_percent": 1,
+                "clip_percent": 0,
                 "denoise": false,
                 "denoise_method": "region-grow",
                 "denoise_grid_cell": 0.15,
@@ -51,8 +52,9 @@
                 "total": 160,
                 "anchor_camera": "006",
                 "radius_scale": 0.8,
-                "height_offset": 0,
-                "pitch_offset": 0.0
+                "height_offset": 0.1,
+                "pitch_offset": 5,
+                "fov_x": 65
             },
             "fuse": {
                 "radius_scale": 0.8,
@@ -94,7 +96,8 @@
                 "anchor_camera": "006",
                 "radius_scale": 0.8,
                 "height_offset": 0.1,
-                "pitch_offset": 0.0
+                "pitch_offset": 0.0,
+                "fov_x": 80.0
             },
             "fuse": {
                 "radius_scale": 0.8,
@@ -135,7 +138,8 @@
                 "total": 250,
                 "anchor_camera": "006",
                 "radius_scale": 0.8,
-                "pitch_offset": 0.0
+                "pitch_offset": 0.0,
+                "fov_x": 80.0
             },
             "fuse": {
                 "radius_scale": 0.8,
@@ -176,7 +180,8 @@
                 "total": 250,
                 "anchor_camera": "006",
                 "radius_scale": 0.8,
-                "pitch_offset": 0.0
+                "pitch_offset": 0.0,
+                "fov_x": 80.0
             },
             "fuse": {
                 "radius_scale": 0.8,

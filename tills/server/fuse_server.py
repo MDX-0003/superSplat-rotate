@@ -626,6 +626,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
       pmSet('pm-i-height_offset', p.interpolate?.height_offset);
       pmSet('pm-i-pitch_offset', p.interpolate?.pitch_offset);
+      pmSet('pm-i-fov_x', p.interpolate?.fov_x);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
       pmToggleDenoise(); pmToggleRing();
@@ -667,6 +668,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.interpolate.radius_scale=pF('pm-i-radius_scale');
       params.interpolate.height_offset=pF('pm-i-height_offset');
       params.interpolate.pitch_offset=pF('pm-i-pitch_offset');
+      params.interpolate.fov_x=pF('pm-i-fov_x');
       let r=await fetch('/presets/save',{{method:'POST',
        headers:{{'Content-Type':'application/json'}},
        body:JSON.stringify({{name:pmName,params:params}})}});
@@ -817,6 +819,7 @@ def build_fuse_page(state: FuseState) -> str:
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
           <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
           <div class="fd"><label>pitch_offset (deg)</label><input type="text" id="pm-i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
+          <div class="fd"><label>fov_x (deg)</label><input type="text" id="pm-i-fov_x" step="0.1" size="5"><span class="tip">输出相机水平视场角(度),默认80</span></div>
         </div>
       </div>
     </div>
@@ -884,6 +887,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             "--radius-scale", str(ip.get("radius_scale", 1.0)),
             "--height-offset", str(ip.get("height_offset", 0.0)),
             "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
+            "--fov-x", str(ip.get("fov_x", 80.0)),
         ]
         _log(f"interpolate: {' '.join(str(a) for a in interp_args)}")
         result = subprocess.run(
@@ -1244,6 +1248,8 @@ def _build_presets_page() -> str:
         <input type="text" id="i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移高度。正值=法线方向,负值=反方向</span></div>
       <div class="field"><label>pitch_offset (deg)</label>
         <input type="text" id="i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
+      <div class="field"><label>fov_x (deg)</label>
+        <input type="text" id="i-fov_x" step="0.1" size="5"><span class="tip">输出相机水平视场角(度),默认80</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
@@ -1298,6 +1304,7 @@ def _build_presets_page() -> str:
       setVal('i-radius_scale', p.interpolate?.radius_scale);
       setVal('i-height_offset', p.interpolate?.height_offset);
       setVal('i-pitch_offset', p.interpolate?.pitch_offset);
+      setVal('i-fov_x', p.interpolate?.fov_x);
       toggleBias(); toggleDenoise(); toggleRing();
     }}
 
@@ -1387,6 +1394,7 @@ def _build_presets_page() -> str:
       params.interpolate.radius_scale = floatVal('i-radius_scale');
       params.interpolate.height_offset = floatVal('i-height_offset');
       params.interpolate.pitch_offset = floatVal('i-pitch_offset');
+      params.interpolate.fov_x = floatVal('i-fov_x');
       return params;
     }}
 

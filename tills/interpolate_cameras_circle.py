@@ -300,7 +300,7 @@ def main():
                          for row in sample_rots[i]],
             "fy": round(float(sample_fy[i]), 6),
             "fx": round(float(sample_fx[i]), 6),
-            "fov_x":80.0,
+            "fov_x": round(float(args.fov_x), 6) if hasattr(args, 'fov_x') else 80.0,
         })
 
     with open(output_path, "w") as f:
