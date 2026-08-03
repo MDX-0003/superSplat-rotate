@@ -34,7 +34,7 @@ LOCAL_TMP = Path("C:/temp/v7_scp_test")    # 本机临时目录 (收发都在这
 
 # 测试数据：项目 05 的 1 个帧目录 + 1 个 PLY
 PROJ_DIR = Path("E:/work/26.7_SKNJ/supersplat/CameraData/05")
-FRAME_DIR = PROJ_DIR / "raw_images/114-2026-06-30-122221"   # 120 张图, ~23 MB
+FRAME_DIR = PROJ_DIR / "raw_images/120-2026-06-30-122221"   # 120 张图, ~23 MB
 PLY_FILE = PROJ_DIR / "0630-122221.ply"                     # ~70 MB
 
 SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10"]

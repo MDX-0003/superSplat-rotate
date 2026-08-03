@@ -10,7 +10,19 @@
       "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\supersplat\" log --oneline -5)",
       "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" remote -v)",
       "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" branch -a)",
-      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" log --oneline -5)"
+      "Bash(git -C \"e:\\\\work\\\\26.7_SKNJ\\\\LiteGSWin\" log --oneline -5)",
+      "Bash(mkdir -p /e/work/26.7_SKNJ/Packages)",
+      "Read(//e/work/26.7_SKNJ/Packages//**)",
+      "Read(//e/e/work/26.7_SKNJ/Packages/VS2022_Offline/**)",
+      "Read(//e/e/work/26.7_SKNJ/Packages/**)",
+      "Bash(kill 1451)",
+      "Bash(/e/work/26.7_SKNJ/Packages/vs_community.exe --layout /e/work/26.7_SKNJ/Packages/VS2022_Offline --add Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64 --lang en-US --lang zh-CN)",
+      "Bash(kill 638)",
+      "Bash(tar -czf /e/work/26.7_SKNJ/Packages/MSVC_14.38.33130_Hostx64.tar.gz -C \"E:/Programs/VS 2022/Community/VC/Tools/MSVC/14.38.33130\" .)",
+      "Bash(unzip -l /e/work/26.7_SKNJ/Packages/VSCode-win32-x64-1.127.0.zip)"
+    ],
+    "additionalDirectories": [
+      "E:\\work\\26.7_SKNJ\\Packages"
     ]
   }
 }
