@@ -36,7 +36,7 @@ if str(_project_root) not in sys.path:
 from tills._distributed import (
     WorkerNode, load_workers, auto_detect_host, validate_workers,
     ssh_run, ssh_run_async, kill_worker_process, cleanup_frame,
-    read_worker_status, scp_send_multi, scp_recv_multi, ROOT,
+    read_worker_status, scp_send_multi, scp_recv, scp_recv_multi, ROOT,
     resolve_worker_python,
 )
 from tills._shared import load_preset, parse_frame_dirname
@@ -59,6 +59,8 @@ class FrameState:
     total_iterations: int = 0
     error_message: str = ""
     retry_count: int = 0
+    sags_status: str = "none"    # none → queued → running → done | failed (SAGS 后处理)
+    sags_error: str = ""
 
 
 class TrainState:
@@ -70,6 +72,7 @@ class TrainState:
         self.frames: dict[str, FrameState] = {}     # "SUBDIR-FRAMEID" → FrameState
         self.workers: list[WorkerNode] = []
         self.running_processes: dict[str, tuple] = {}  # "KEY" → (WorkerNode, Popen)
+        self.sags_processes: dict[str, tuple] = {}     # "KEY" → (WorkerNode, Popen) — SAGS 任务
         self.raw_images_dir: Path | None = None
         self.training_enabled: bool = False  # toggled by web UI start/stop button
         self.cali_running: bool = False       # true while generate_cali background thread runs
@@ -113,6 +116,8 @@ class TrainState:
                     "total_iterations": fs.total_iterations,
                     "error_message": fs.error_message,
                     "retry_count": fs.retry_count,
+                    "sags_status": fs.sags_status,
+                    "sags_error": fs.sags_error,
                 })
             worker_list = []
             for w in self.workers:
@@ -163,6 +168,7 @@ _PAGE_CSS = """
          cursor:pointer;border-radius:3px;font-size:12px;margin:1px}
   button.danger{background:#c0392b}
   button.warn{background:#d4850a}
+  button.sags{background:#7b5ea7}
   button:hover{opacity:0.85}
   button:disabled{opacity:0.4;cursor:default}
   .log-panel{background:#fdfaf2;border:1px solid #d9cfb8;border-radius:4px;
@@ -197,6 +203,10 @@ _JS_SSE = """
       if ((f.status === 'new' || f.status === 'checking' || f.status === 'ready')
           && oldStatus !== f.status) {
         location.reload();
+      }
+      // SAGS status changed → SAGS button/badge need re-render → reload
+      if (row.dataset.sags !== (f.sags_status || 'none')) {
+        location.reload(); return;
       }
     }
     for (const w of data.workers) {
@@ -340,8 +350,26 @@ def build_page(state: TrainState) -> str:
             actions += (f'<button class="danger" '
                         f'onclick="doAction(\'{f["key"]}\',\'clean\',\'hard\')">清理 hard</button>')
 
+        s = f["sags_status"]
+        sags_err = f["sags_error"].replace('"', "'") if f["sags_error"] else ""
+        if s == "none":
+            sags_html = (f'<button class="sags" '
+                         f'onclick="doAction(\'{f["key"]}\',\'sags_enqueue\')">🎭 SAGS</button>')
+        elif s == "queued":
+            sags_html = ('<span class="st-checking">排队中</span> '
+                         f'<button onclick="doAction(\'{f["key"]}\',\'sags_cancel\')">取消</button>')
+        elif s == "running":
+            sags_html = '<span class="st-training">SAGS运行中...</span>'
+        elif s == "done":
+            sags_html = ('<span class="st-done">✓ SAGS</span> '
+                         f'<button onclick="doAction(\'{f["key"]}\',\'sags_enqueue\')">重跑</button>')
+        else:  # failed
+            sags_html = (f'<span class="st-failed" title="{sags_err}">✗ SAGS</span> '
+                         f'<button onclick="doAction(\'{f["key"]}\',\'sags_enqueue\')">重跑</button>')
+
         rows_html += f"""
-        <tr id="row-{f['key']}" onclick="selectCaliRow(this, event)">
+        <tr id="row-{f['key']}" data-sags="{f['sags_status']}"
+            onclick="selectCaliRow(this, event)">
           <td><input type="radio" name="cali-frame" value="{f['key']}"
                      data-dirname="{f['dirname']}"
                      onchange="updateCaliButton()"></td>
@@ -350,6 +378,7 @@ def build_page(state: TrainState) -> str:
           <td>{f['worker_id'] or '—'}</td>
           <td>{iter_str}</td>
           <td>{actions}</td>
+          <td>{sags_html}</td>
         </tr>"""
 
     workers_html = ""
@@ -399,7 +428,7 @@ def build_page(state: TrainState) -> str:
   </div>
   <table>
     <thead>
-      <tr><th>位姿</th><th>帧号</th><th>状态</th><th>Worker</th><th>迭代</th><th>操作</th></tr>
+      <tr><th>位姿</th><th>帧号</th><th>状态</th><th>Worker</th><th>迭代</th><th>操作</th><th>SAGS</th></tr>
     </thead>
     <tbody>{rows_html}</tbody>
   </table>
@@ -487,6 +516,31 @@ def handle_action(state: TrainState, body: dict,
     if frame is None:
         return {"status": "error", "message": f"frame not found: {key}"}
 
+    # ── SAGS queue control (per-frame) ──
+    if action == "sags_enqueue":
+        if frame.sags_status == "running":
+            return {"status": "error",
+                    "message": "该帧 SAGS 正在运行中（约 90 秒），请等待完成"}
+        if frame.sags_status == "queued":
+            return {"status": "error", "message": "该帧 SAGS 已在排队中"}
+        state.update_frame(key, sags_status="queued", sags_error="")
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
+        return {"status": "ok", "message": f"SAGS 已排队: {key}"}
+
+    if action == "sags_cancel":
+        if frame.sags_status == "running":
+            return {"status": "error",
+                    "message": "SAGS 运行中不可取消，请等待完成"}
+        if frame.sags_status != "queued":
+            return {"status": "error", "message": "该帧当前没有排队中的 SAGS"}
+        state.update_frame(key, sags_status="none", sags_error="")
+        if broadcaster:
+            broadcaster.broadcast("status",
+                                  json.dumps(state.to_dict(), ensure_ascii=False))
+        return {"status": "ok", "message": f"SAGS 排队已取消: {key}"}
+
     if action == "stop":
         worker = None
         for w in state.workers:
@@ -531,6 +585,16 @@ def handle_action(state: TrainState, body: dict,
         if worker is None:
             return {"status": "error", "message": "no worker available"}
 
+        # SAGS interaction: running → reject; queued → auto-cancel
+        if frame.sags_status == "running":
+            return {"status": "error",
+                    "message": "该帧 SAGS 正在运行，禁止清理（请等待完成）"}
+        if frame.sags_status == "queued":
+            state.update_frame(key, sags_status="none", sags_error="")
+            if broadcaster:
+                broadcaster.broadcast("status",
+                                      json.dumps(state.to_dict(), ensure_ascii=False))
+
         result = cleanup_frame(
             worker, proj_dir, frame.sub_dir, frame.frame_id,
             level=level, frame_dirname=frame.dirname,
@@ -541,7 +605,8 @@ def handle_action(state: TrainState, body: dict,
             state.update_frame(key, status="new",
                                worker_id="",
                                iteration=0, total_iterations=0,
-                               error_message="", retry_count=0)
+                               error_message="", retry_count=0,
+                               sags_status="none", sags_error="")
         if broadcaster:
             broadcaster.broadcast("status",
                                   json.dumps(state.to_dict(), ensure_ascii=False))
@@ -748,6 +813,123 @@ def _build_remote_backup_cmd(cali_dir: Path, backup_root: Path, sub_dir: str) ->
         f'Move-Item -Path $src -Destination \\"$dstRoot\\$name-$n\\"'
         f'"'
     )
+
+
+# ── SAGS helpers ────────────────────────────────────────────────────────────────
+
+def _sags_defaults(cfg: dict) -> dict:
+    """SAGS run parameters: fixed defaults, overridable via pipeline.json 'sags'."""
+    s = cfg.get("sags", {}) if isinstance(cfg.get("sags"), dict) else {}
+    return {
+        "view_count": s.get("view_count", 12),
+        "max_actors": s.get("max_actors", 2),
+        "speed": s.get("speed", "balanced"),
+    }
+
+
+def _sags_sparse_dir(worker: WorkerNode, fs) -> Path:
+    """Path of the frame's COLMAP sparse on the given worker."""
+    return (Path(worker.litegs_path) / "data" / fs.sub_dir / fs.dirname /
+            "sparse" / "0")
+
+
+def _probe_sags_worker(state: TrainState, fs) -> WorkerNode | None:
+    """Find an online worker that still holds the frame's sparse/0 (host first).
+
+    Called only when ``fs.worker_id`` is unknown (e.g. daemon restarted).
+    """
+    for w in [x for x in state.workers if x.is_online]:
+        sparse = _sags_sparse_dir(w, fs)
+        if w.is_host:
+            if sparse.is_dir():
+                return w
+        else:
+            sparse_str = str(sparse).replace("\\", "/")
+            try:
+                r = ssh_run(w, f'if exist "{sparse_str}" (echo OK)', timeout=10)
+                if r.returncode == 0 and "OK" in (r.stdout or ""):
+                    return w
+            except Exception:
+                continue
+    return None
+
+
+def _build_sags_cmd(cfg: dict, worker: WorkerNode, fs) -> str | None:
+    """Build the SAGS shell command for a worker (host or remote).
+
+    Returns None when configuration/data is missing.  Reuses the exact
+    command-string style of the liteGS dispatch (cd /d + quoted paths + &&),
+    which ssh_run_async handles via shell=True (host) / SSH (remote).
+    """
+    if not worker.sags_path:
+        return None
+    sags_root = Path(worker.sags_path)
+    py = str(sags_root / ".venv" / "Scripts" / "python.exe")
+    script = str(sags_root / "scripts" / "segment_humans_sags.py")
+    input_ply = str(Path(worker.litegs_path) / "results" / fs.sub_dir /
+                    f"{fs.sub_dir}-{fs.frame_id}.ply")
+    sparse = str(_sags_sparse_dir(worker, fs))
+    out_dir = str(sags_root / "result" / fs.sub_dir)
+
+    if worker.is_host:
+        # fast local sanity checks (remote fails loudly if data was cleaned)
+        if not Path(input_ply).exists() or not Path(sparse).is_dir():
+            return None
+        if not Path(py).exists() or not Path(script).exists():
+            return None
+
+    p = _sags_defaults(cfg)
+    return (
+        f'cd /d "{sags_root}" && "{py}" "{script}" "{input_ply}" '
+        f'--colmap-sparse "{sparse}" --output-dir "{out_dir}" '
+        f'--view-count {p["view_count"]} --max-actors {p["max_actors"]} '
+        f'--speed {p["speed"]}'
+    )
+
+
+def _read_sags_report(worker: WorkerNode, report_path: Path) -> tuple[bool, str]:
+    """Read SAGS report.json on the worker. Returns (ok, status)."""
+    try:
+        if worker.is_host:
+            if not report_path.exists():
+                return False, ""
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+            return True, str(data.get("status", ""))
+        else:
+            rp = str(report_path).replace("\\", "/")
+            r = ssh_run(worker, f'if exist "{rp}" type "{rp}"', timeout=20)
+            if r.returncode != 0 or not (r.stdout or "").strip():
+                return False, ""
+            data = json.loads(r.stdout.strip())
+            return True, str(data.get("status", ""))
+    except Exception:
+        return False, ""
+
+
+def _collect_sags_ply(worker: WorkerNode, remote_ply: str, local_ply: Path) -> bool:
+    """Collect the -sags.ply atomically (tmp + replace) so the fuse_server
+    5s scan never sees a half-written file."""
+    tmp = local_ply.with_name(local_ply.name + ".tmp")
+    try:
+        if worker.is_host:
+            src = Path(remote_ply)
+            if not src.exists():
+                return False
+            shutil.copy2(str(src), str(tmp))
+        else:
+            ok = scp_recv(worker, remote_ply.replace("\\", "/"), tmp)
+            if not ok:
+                return False
+        if not tmp.exists():
+            return False
+        tmp.replace(local_ply)
+        return True
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────────
@@ -973,6 +1155,12 @@ def main_loop(state: TrainState, cfg: dict,
                     if fs.status == "training" and fs.worker_id:
                         worker_loads[fs.worker_id] = \
                             worker_loads.get(fs.worker_id, 0) + 1
+                # Workers with a queued/running SAGS job are reserved — a machine
+                # runs one GPU job at a time, so liteGS must use other machines.
+                for fs in state.frames.values():
+                    if fs.sags_status in ("queued", "running") and fs.worker_id:
+                        worker_loads[fs.worker_id] = max(
+                            worker_loads.get(fs.worker_id, 0), max_per_worker)
 
                 for key, fs in ready_frames:
                     # skip workers already at capacity
@@ -1090,6 +1278,77 @@ def main_loop(state: TrainState, cfg: dict,
                         state.update_frame(key, status="failed",
                                            error_message=f"ssh_run_async: {e}")
                         _emit_log("daemon", f"启动失败 {key}: {e}")
+
+            # ── 2b. Dispatch SAGS jobs (queued → running when target machine free) ──
+            for key, fs in list(state.frames.items()):
+                if fs.sags_status != "queued":
+                    continue
+
+                # Resolve target worker: the machine that holds this frame's data
+                # (its training worker). SAGS never migrates across machines.
+                target = None
+                if fs.worker_id:
+                    for w in online_workers:
+                        if w.id == fs.worker_id:
+                            target = w
+                            break
+                    if target is None:
+                        # training worker offline → wait for it to come back
+                        continue
+                if target is None:
+                    target = _probe_sags_worker(state, fs)
+                    if target is None:
+                        state.update_frame(key, sags_status="failed",
+                                           sags_error="该帧训练数据不存在于任何在线 worker（可能已清理）")
+                        _emit_log("daemon",
+                                  f"SAGS {key}: 找不到持有该帧数据的 worker (sparse 缺失)")
+                        continue
+                    state.update_frame(key, worker_id=target.id)
+
+                # Target busy (training another frame or running another SAGS)?
+                busy = False
+                for f2 in state.frames.values():
+                    if f2.worker_id == target.id and (
+                            f2.status == "training"
+                            or f2.sags_status == "running"):
+                        busy = True
+                        break
+                if busy:
+                    continue  # retry next cycle
+
+                sags_cmd = _build_sags_cmd(cfg, target, fs)
+                if sags_cmd is None:
+                    state.update_frame(
+                        key, sags_status="failed",
+                        sags_error=("sags_path 未配置" if not target.sags_path
+                                    else "该帧训练产物缺失（PLY/sparse）"))
+                    _emit_log("daemon",
+                              f"SAGS {key}: 无法构建命令（检查 sags_path 与帧数据）")
+                    continue
+
+                try:
+                    proc = ssh_run_async(target, sags_cmd)
+                    state.sags_processes[key] = (target, proc)
+                    state.update_frame(key, sags_status="running")
+                    _emit_log("daemon", f"启动 SAGS {key} → {target.id}")
+
+                    _wid = target.id
+                    def _sags_reader(proc_obj, wid, k):
+                        try:
+                            for line in proc_obj.stdout:
+                                line = line.rstrip("\n\r")
+                                if line:
+                                    _emit_log(wid, f"[sags:{k}] {line}")
+                        except Exception:
+                            pass
+                    t = threading.Thread(target=_sags_reader,
+                                         args=(proc, _wid, key),
+                                         daemon=True)
+                    t.start()
+                except Exception as e:
+                    state.update_frame(key, sags_status="failed",
+                                       sags_error=f"启动失败: {e}")
+                    _emit_log("daemon", f"SAGS 启动失败 {key}: {e}")
 
             # ── 3. Monitor running processes ──
             #    Stdout is read by per-process daemon threads — this loop
@@ -1209,6 +1468,55 @@ def main_loop(state: TrainState, cfg: dict,
             for key in done_keys:
                 state.running_processes.pop(key, None)
 
+            # ── 3b. Monitor SAGS processes ──
+            sags_done_keys = []
+            for key, (worker, proc) in list(state.sags_processes.items()):
+                rc = proc.poll()
+                if rc is None:
+                    continue
+                sags_done_keys.append(key)
+                fs = state.get_frame(key)
+                if fs is None:
+                    continue
+
+                report_path = (Path(worker.sags_path) / "result" /
+                               fs.sub_dir / "report.json")
+                if rc == 0:
+                    _ok, status = _read_sags_report(worker, report_path)
+                    if _ok and status == "ok":
+                        remote_ply = str(
+                            Path(worker.sags_path) / "result" / fs.sub_dir /
+                            f"{fs.sub_dir}-{fs.frame_id}-sags.ply")
+                        local_ply = proj_dir / f"{fs.sub_dir}-{fs.frame_id}-sags.ply"
+                        if _collect_sags_ply(worker, remote_ply, local_ply):
+                            size_mb = local_ply.stat().st_size / 1024 ** 2
+                            _emit_log("daemon",
+                                      f"回收 SAGS {key} ({size_mb:.1f} MB) "
+                                      f"→ {local_ply.name}")
+                            state.update_frame(key, sags_status="done",
+                                               sags_error="")
+                        else:
+                            _emit_log("daemon",
+                                      f"SAGS 回收失败 {key}: PLY 不存在或传输失败")
+                            state.update_frame(key, sags_status="failed",
+                                               sags_error="PLY 回收失败")
+                    else:
+                        reason = status or "report 缺失"
+                        _emit_log("daemon",
+                                  f"SAGS {key} 未产出有效结果 (status={reason})")
+                        state.update_frame(key, sags_status="failed",
+                                           sags_error=f"result status: {reason}")
+                else:
+                    # Enrich failure reason from report.json if present
+                    _ok, status = _read_sags_report(worker, report_path)
+                    reason = f"exit {rc}" + (f" (status={status})" if status else "")
+                    _emit_log("daemon", f"SAGS 失败 {key} ({reason})")
+                    state.update_frame(key, sags_status="failed",
+                                       sags_error=reason)
+
+            for key in sags_done_keys:
+                state.sags_processes.pop(key, None)
+
             # ── 4. Push status update ──
             _emit_status()
 
@@ -1221,6 +1529,11 @@ def main_loop(state: TrainState, cfg: dict,
 
     # Cleanup on stop
     for key, (worker, proc) in state.running_processes.items():
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    for key, (worker, proc) in state.sags_processes.items():
         try:
             proc.terminate()
         except Exception:

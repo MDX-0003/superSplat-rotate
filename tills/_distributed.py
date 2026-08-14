@@ -70,6 +70,7 @@ class WorkerNode:
     ssh_password: Optional[str] = None  # TBD: requires sshpass or paramiko
     litegs_path: str = ""
     supersplat_path: str = ""
+    sags_path: str = ""          # per-worker SAGS repo path (same on every machine)
 
     # cached resolved Python path (populated by resolve_worker_python)
     python_exe: str = ""
@@ -144,6 +145,7 @@ def load_workers(workers_config_path: Path) -> list[WorkerNode]:
             ssh_password=w.get("ssh_password"),
             litegs_path=w.get("litegs_path", ""),
             supersplat_path=w.get("supersplat_path", ""),
+            sags_path=w.get("sags_path", ""),
         )
         workers.append(node)
 

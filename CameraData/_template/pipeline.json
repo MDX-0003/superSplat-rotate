@@ -5,7 +5,8 @@
     "2. 修改 project 为项目名（如 06）",
     "3. 修改 preset 为 presets.json 中已定义的预设名",
     "4. 修改 litegs_path 为本机 LiteGSWin 路径",
-    "5. 修改 distributed.training.* 为训练参数"
+    "5. 修改 distributed.training.* 为训练参数",
+    "6. 可选：sags 节覆盖 SAGS 后处理默认参数（view_count/max_actors/speed）"
   ],
   "project": "{project_name}",
   "frame_count_prefix": 130,
@@ -16,6 +17,12 @@
   "litegs_path": "C:/code/LiteGSWin",
   "fps": 25,
   "resolution": "3840x2160",
+  "sags": {
+    "_doc": "SAGS 后处理默认参数（可选，不写则用内置默认：12 视图 / 2 演员 / balanced）",
+    "view_count": 12,
+    "max_actors": 2,
+    "speed": "balanced"
+  },
   "distributed": {
     "enabled": true,
     "workers_config": "workers.json",

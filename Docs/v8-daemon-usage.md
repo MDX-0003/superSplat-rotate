@@ -333,3 +333,48 @@ Worker 上线后会自动开始扫描分发。
 2. 修复问题
 3. 点击 `[清理 soft]` 重置
 4. 下一轮自动重新分发训练
+
+## 9. SAGS 后处理（演员自动分割）
+
+> 训练完成后对**某一帧**可选跑 SAGS（3DGS 演员分割），产物 `{frame}-sags.ply` 与原 PLY 并存，
+> 自动被 fuse_server 扫描识别，可混选参与 fuse/clip/render（合成命名含 `-sags` 后缀，如
+> `0805-combine-140403-150732-sags.ply`）。
+
+### 9.1 前置条件
+
+1. 每台要跑 SAGS 的机器都部署 SAGS-Post（路径各机一致，如 `C:/SAGS`）；
+2. `CameraData/<project>/workers.json` 每个 worker 加 `"sags_path": "C:/SAGS"`（不需要的机器可省略）；
+3. 可选：`pipeline.json` 加 `sags` 节覆盖默认参数（默认 12 视图 / 2 演员 / balanced，约 90 秒/帧）：
+   ```json
+   "sags": { "view_count": 12, "max_actors": 2, "speed": "balanced" }
+   ```
+
+### 9.2 操作
+
+| 状态 | 操作 |
+|---|---|
+| 默认 | 帧表格最右列 `[🎭 SAGS]` 排队 |
+| 排队中 | `[取消]` 撤销排队 |
+| 运行中 | 等待（约 90 秒），不可取消 |
+| ✓ SAGS | 已回收；`[重跑]` 可重新跑（覆盖） |
+| ✗ SAGS | 失败；鼠标悬停看原因；`[重跑]` 重试 |
+
+### 9.3 行为约定
+
+- **互斥**：一台机器同一时刻只跑一个 GPU 任务。某帧 SAGS 排队/运行期间，该机器不会被派发新的
+  liteGS 训练帧——训练会自动去其他空闲机器（"去其他机器找空闲"）。
+- **绑定机器**：某帧的 SAGS 只在其训练机（持有该帧 `data/<sub>/<frame>/sparse/0` 与训练产物的机器）
+  上运行，中间文件不跨设备传输。训练中标记的帧，训练完成后自动在同一机器串行执行。
+- **回收**：SAGS 成功（exit 0 且 `report.json status=="ok"`）→ `{frame}-sags.ply` 原子写入
+  `CameraData/<project>/`；原 PLY 保留。不检出人（`no_people_detected`）或失败 → 不回收。
+- **日志**：SAGS 输出实时进入该 worker 的日志面板（前缀 `[sags:KEY]`）。
+
+### 9.4 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| `✗ SAGS` 悬停显示"找不到持有该帧数据的 worker (sparse 缺失)" | 该帧训练数据已被清理或不在任何在线机器上；不跨设备搬数据，需重新训练该帧或从备份恢复 |
+| `✗ SAGS` 显示"sags_path 未配置" | 该 worker 的 `workers.json` 没写 `sags_path` |
+| `✗ SAGS` 显示 `result status: no_people_detected` | 该帧没检出人（无人/人被严重遮挡）；属正常结果，不回收 |
+| 点清理报"该帧 SAGS 正在运行，禁止清理" | SAGS 约 90 秒，等完成再清理；排队中的 SAGS 会被清理自动取消 |
+| daemon 重启后排队丢失 | SAGS 队列是内存态（与帧状态一致）；重启后需重新点 🎭 |
