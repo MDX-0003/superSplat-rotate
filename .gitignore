@@ -16,3 +16,5 @@ SequenceData/*
 __pycache__/
 *.pyc
 .venv/
+supersplat.code-workspace
+.vscode/
