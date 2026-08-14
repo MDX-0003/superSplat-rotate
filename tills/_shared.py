@@ -450,8 +450,18 @@ async def verify_timeline(page):
     return frames
 
 
-async def render_video(page, total_frames, renders_dir, expected_filename, fps):
-    """Render video via OPFS streaming → chunked readback."""
+async def render_video(page, total_frames, renders_dir, expected_filename, fps,
+                     start_frame: int = 0,
+                     ply_segments: list | None = None):
+    """Render video via OPFS streaming → chunked readback.
+
+    Args:
+        start_frame: First timeline frame to render (default 0).
+        ply_segments: Optional list of switch-before frame numbers for
+            multi-PLY segmented rendering. E.g. [25, 50] means:
+            frame < 25 → splat[0], 25 ≤ frame < 50 → splat[1],
+            frame ≥ 50 → splat[2]. None/empty = single-PLY mode.
+    """
     await page.evaluate("""async () => {
         window.__renderStatus = null;
         window.__renderProgress = -1;
@@ -466,15 +476,19 @@ async def render_video(page, total_frames, renders_dir, expected_filename, fps):
     }""")
 
     settings = {
-        "startFrame": 0, "endFrame": total_frames - 1,
+        "startFrame": start_frame, "endFrame": total_frames - 1,
         "frameRate": fps, "width": VIDEO_WIDTH, "height": VIDEO_HEIGHT,
         "bitrate": VIDEO_BITRATE, "transparentBg": False, "showDebug": False,
         "format": VIDEO_FORMAT, "codec": VIDEO_CODEC,
     }
+    if ply_segments:
+        settings["plySegments"] = ply_segments
 
     print(f"\n  视频设置: {VIDEO_WIDTH}x{VIDEO_HEIGHT}, {fps}fps, "
           f"{VIDEO_FORMAT}/{VIDEO_CODEC}, high quality")
-    print(f"  帧范围: 0 - {total_frames - 1}  (共 {total_frames} 帧)")
+    print(f"  帧范围: {start_frame} - {total_frames - 1}  (共 {total_frames - start_frame} 帧)")
+    if ply_segments:
+        print(f"  多 PLY 分段: 切换点 {ply_segments} (共 {len(ply_segments) + 1} 段)")
     print(f"\n  开始渲染 (OPFS 流式输出)...")
 
     await page.evaluate("""(settings) => {

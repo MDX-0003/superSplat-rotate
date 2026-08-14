@@ -414,6 +414,34 @@ def build_fuse_page(state: FuseState) -> str:
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>SuperSplat 未启动 (npm run serve)</p>" if not npm_ok else ""}
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>Render PLY 列表为空 (尚未 fuse+clip)</p>" if render_no_ply else ""}
       {"<p style='color:#c0392b;font-size:11px;margin:4px 0'>render 正在运行</p>" if 'render' in active else ""}
+
+      <!-- ── Multi-PLY segmented render ── -->
+      <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #d9cfb8">
+        <h3 style="font-size:13px;color:#b87333;margin-bottom:4px">&#128257; 多 PLY 分段渲染</h3>
+        <p style="font-size:11px;color:#7a7368;margin-bottom:6px">
+          自动发现 combine PLY 的中间产物，按帧切换可见性。
+        </p>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
+          <label style="font-size:12px">切换帧1:</label>
+          <input type="number" id="switch-frame-1" value="50" min="1"
+                 style="width:55px;padding:2px 4px;font-size:12px;
+                        border:1px solid #d9cfb8;border-radius:3px">
+          <label style="font-size:12px">切换帧2:</label>
+          <input type="number" id="switch-frame-2" value="100" min="1"
+                 style="width:55px;padding:2px 4px;font-size:12px;
+                        border:1px solid #d9cfb8;border-radius:3px">
+        </div>
+        <p style="font-size:10px;color:#aaa295;margin-bottom:6px">
+          帧 &lt; 切换帧1 &#8594; A &nbsp;|&nbsp;
+          切换帧1 &le; 帧 &lt; 切换帧2 &#8594; B &nbsp;|&nbsp;
+          帧 &ge; 切换帧2 &#8594; C
+        </p>
+        <button class="render-btn" id="btn-render-multi" {render_disabled}
+                onclick="doRenderMulti()"
+                style="background:#b87333">
+          &#128257; multi-PLY render
+        </button>
+      </div>
     </div>
   </div>
 
@@ -558,6 +586,27 @@ def build_fuse_page(state: FuseState) -> str:
         method:'POST',
         headers:{{'Content-Type':'application/json'}},
         body: JSON.stringify({{ply_index: ply_idx, json_index: json_idx}})
+      }});
+      let d = await r.json();
+      if (d.status === 'ok') location.reload();
+      else alert(d.message || JSON.stringify(d));
+    }}
+
+    async function doRenderMulti() {{
+      let ply_idx = getRenderPlyIndex();
+      let json_idx = getJsonIndex();
+      if (ply_idx === null) {{ alert('请选择一个 Render PLY'); return; }}
+      if (json_idx === null) {{ alert('请选择一个 JSON 文件'); return; }}
+      let sf1 = parseInt(document.getElementById('switch-frame-1').value) || 25;
+      let sf2 = parseInt(document.getElementById('switch-frame-2').value) || 50;
+      if (sf1 >= sf2) {{ alert('切换帧1 必须小于 切换帧2'); return; }}
+      let r = await fetch('/render_multi', {{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{
+          ply_index: ply_idx, json_index: json_idx,
+          switch_frame_1: sf1, switch_frame_2: sf2
+        }})
       }});
       let d = await r.json();
       if (d.status === 'ok') location.reload();
@@ -1118,6 +1167,192 @@ def run_render(state: FuseState, cfg: dict,
         broadcaster.broadcast("status", "done")
 
 
+# ── Multi-PLY segmented render ─────────────────────────────────────────────────
+
+def discover_ply_segments(ply_path: Path) -> list[Path]:
+    """Auto-discover intermediate PLYs from a combine PLY filename.
+
+    Given ``0719-combine-200717-200625-200555.ply``, strips timestamps from
+    the right to find B and A::
+
+        → [0719-combine-200717.ply,           # A (all but last two ts)
+           0719-combine-200717-200625.ply,    # B (all but last ts)
+           0719-combine-200717-200625-200555.ply]  # C (itself)
+
+    Searches ``<proj>-clip/`` first, then ``<proj>/``.  Missing intermediates
+    are skipped.  The selected PLY (C) is always the last entry.
+    Returns 1–3 paths in fuse order (earliest → latest).
+    """
+    stem = ply_path.stem
+    if "-combine-" not in stem:
+        return [ply_path]
+
+    prefix, ts_part = stem.split("-combine-", 1)
+    timestamps = ts_part.split("-")
+    if len(timestamps) < 2:
+        return [ply_path]
+
+    proj_dir = ply_path.parent
+    # clip_dir: if the selected PLY is already in <proj>-clip, use that;
+    # otherwise derive from proj_dir.
+    if proj_dir.name.endswith("-clip"):
+        clip_dir = proj_dir
+        proj_dir_plain = proj_dir.parent / proj_dir.name[:-5]  # strip "-clip"
+    else:
+        clip_dir = proj_dir.parent / (proj_dir.name + "-clip")
+        proj_dir_plain = proj_dir
+
+    result: list[Path] = []
+
+    # Generate intermediate names by keeping first N timestamps
+    for n in range(1, len(timestamps)):
+        inter_stem = f"{prefix}-combine-{'-'.join(timestamps[:n])}"
+        inter_name = f"{inter_stem}.ply"
+        # Search clip/ first, then proj/
+        found = None
+        for d in (clip_dir, proj_dir_plain):
+            candidate = d / inter_name
+            if candidate.exists():
+                found = candidate
+                break
+        if not found and n == 1:
+            # Fallback for single-timestamp intermediate: raw PLY
+            # e.g. 0719-200717.ply when 0719-combine-200717.ply is missing
+            raw_name = f"{prefix}-{timestamps[0]}.ply"
+            for d in (clip_dir, proj_dir_plain):
+                candidate = d / raw_name
+                if candidate.exists():
+                    found = candidate
+                    break
+        if found:
+            result.append(found)
+
+    # Always append the selected PLY itself as the final segment
+    result.append(ply_path)
+    return result
+
+
+def run_render_multi(state: FuseState, cfg: dict,
+                     ply_index: int, json_index: int,
+                     switch_frame_1: int, switch_frame_2: int,
+                     broadcaster: SSEBroadcaster, logger: FileLogger):
+    """Execute multi-PLY segmented Playwright render.
+
+    Auto-discovers intermediate PLYs from the selected combine PLY, uploads
+    all of them, then renders with per-segment visibility switching.
+    """
+    proj_name = cfg["project"]
+    proj_dir = ROOT / f"CameraData/{proj_name}"
+    fps = cfg.get("fps", 25)
+
+    with state._lock:
+        render_list = list(state.render_plys)
+        json_list = list(state.json_files)
+
+    if not (0 <= ply_index < len(render_list)):
+        _log_render("ERROR: invalid PLY index", state, broadcaster, logger)
+        with state._lock:
+            state.active_tasks.discard("render")
+        return
+    if not (0 <= json_index < len(json_list)):
+        _log_render("ERROR: invalid JSON index", state, broadcaster, logger)
+        with state._lock:
+            state.active_tasks.discard("render")
+        return
+
+    ply_path = Path(render_list[ply_index]["path"])
+    json_path = Path(json_list[json_index]["path"])
+
+    def _log(line: str):
+        state.add_log(line)
+        broadcaster.broadcast("log", line)
+        logger.write("render", line)
+
+    async def _do_render():
+        pw, browser, page = await ensure_browser(SUPERSPLAT_URL)
+        try:
+            # 1. Discover PLY segments
+            segments = discover_ply_segments(ply_path)
+            _log(f"多 PLY 分段: 发现 {len(segments)} 个 PLY")
+            for i, s in enumerate(segments):
+                label = ["A", "B", "C"][i] if i < 3 else str(i + 1)
+                _log(f"  {label}: {s.name}")
+
+            # 2. Upload all PLYs in order (A → B → C)
+            for i, seg_path in enumerate(segments):
+                label = ["A", "B", "C"][i] if i < 3 else str(i + 1)
+                _log(f"上传 PLY-{label}: {seg_path.name}")
+                await upload_ply(page, seg_path)
+                # Verify
+                count = await page.evaluate(
+                    "window.scene.events.invoke('scene.splats').length")
+                _log(f"  当前 splat 数: {count}")
+
+            # 3. Upload JSON
+            total_frames = await upload_json_file(page, json_path)
+            if total_frames == 0:
+                _log("ERROR: JSON 导入失败 (total_frames=0)")
+                return
+
+            # 4. Build plySegments based on actual count
+            n_segs = len(segments)
+            ply_segments = None
+            if n_segs == 2:
+                ply_segments = [switch_frame_1]
+                _log(f"  2 段渲染: 切换帧 = {switch_frame_1}")
+            elif n_segs >= 3:
+                ply_segments = [switch_frame_1, switch_frame_2]
+                _log(f"  3 段渲染: 切换帧 = [{switch_frame_1}, {switch_frame_2}]")
+
+            renders_dir = (
+                Path(cfg["video_output_path"]) if "video_output_path" in cfg
+                else proj_dir / "renders"
+            )
+            renders_dir.mkdir(parents=True, exist_ok=True)
+
+            # Build video filename from PLY suffix
+            ply_stem = ply_path.stem
+            if "-combine-" in ply_stem:
+                suffix = ply_stem.split("-combine-", 1)[1]
+            else:
+                suffix = ply_stem.split("-", 1)[1] if "-" in ply_stem else ""
+            expected_filename = f"{proj_name}-{suffix}.mp4" if suffix else f"{proj_name}.mp4"
+
+            success = await render_video(
+                page, total_frames, renders_dir, expected_filename, fps,
+                ply_segments=ply_segments,
+            )
+            if success:
+                _log(f"multi-render 完成 → {renders_dir / expected_filename}")
+            else:
+                _log("multi-render 可能未完成，请检查 SuperSplat 页面")
+        finally:
+            try:
+                await page.close()
+            except Exception:
+                pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+
+    try:
+        _log(f"multi-render PLY: {ply_path.name}")
+        _log(f"multi-render JSON: {json_path.name}")
+        _log(f"切换帧: {switch_frame_1}, {switch_frame_2}")
+        asyncio.run(_do_render())
+    except Exception as e:
+        _log(f"MULTI-RENDER ERROR: {e}")
+    finally:
+        with state._lock:
+            state.active_tasks.discard("render")
+        broadcaster.broadcast("status", "done")
+
+
 def _log_render(line: str, state: FuseState, broadcaster: SSEBroadcaster,
                 logger: FileLogger):
     state.add_log(line)
@@ -1508,6 +1743,44 @@ def _make_fuse_routes(state: FuseState, cfg: dict,
 
     # ── preset CRUD ──
 
+    def _render_multi(handler, body):
+        with state._lock:
+            if "render" in state.active_tasks:
+                return json.dumps({"status": "error",
+                                   "message": "render 已在运行"}), \
+                       "application/json; charset=utf-8"
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                pass
+        ply_index = body.get("ply_index")
+        json_index = body.get("json_index")
+        switch_frame_1 = int(body.get("switch_frame_1", 25))
+        switch_frame_2 = int(body.get("switch_frame_2", 50))
+        if ply_index is None:
+            return json.dumps({"status": "error", "message": "未选择 Render PLY"}), \
+                   "application/json; charset=utf-8"
+        if json_index is None:
+            return json.dumps({"status": "error", "message": "未选择 JSON"}), \
+                   "application/json; charset=utf-8"
+        if switch_frame_1 >= switch_frame_2:
+            return json.dumps({"status": "error",
+                               "message": "切换帧1 必须小于 切换帧2"}), \
+                   "application/json; charset=utf-8"
+        with state._lock:
+            state.active_tasks.add("render")
+        t = threading.Thread(
+            target=run_render_multi,
+            args=(state, cfg, ply_index, json_index,
+                  switch_frame_1, switch_frame_2,
+                  broadcaster, logger),
+            daemon=True,
+        )
+        t.start()
+        return json.dumps({"status": "ok", "message": "multi-render started"}), \
+               "application/json; charset=utf-8"
+
     def _presets_page(handler):
         return _build_presets_page(), "text/html; charset=utf-8"
 
@@ -1579,6 +1852,7 @@ def _make_fuse_routes(state: FuseState, cfg: dict,
                "application/json; charset=utf-8"
 
     return {"/": _root, "/fuse": _fuse, "/render": _render,
+            "/render_multi": _render_multi,
             "/presets": _presets_page, "/presets/data": _presets_data,
             "/presets/save": _presets_save, "/presets/delete": _presets_delete,
             "/presets/create": _presets_create}

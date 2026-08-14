@@ -47,6 +47,10 @@ type VideoSettings = {
     showDebug: boolean;
     format: 'mp4' | 'webm' | 'mov' | 'mkv';
     codec: 'h264' | 'h265' | 'vp9' | 'av1';
+    /** Optional: switch-before frame numbers for multi-PLY segmented rendering.
+     *  E.g. [25, 50] means: frame < 25 → splat[0], 25 ≤ frame < 50 → splat[1],
+     *  frame ≥ 50 → splat[2]. Length 1–2. Omitted/empty = single-PLY mode. */
+    plySegments?: number[];
 };
 
 const removeExtension = (filename: string) => {
@@ -419,8 +423,21 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
 
             let encoder: VideoEncoder | null = null;
 
+            // ── multi-PLY segmented rendering state (hoisted for finally visibility) ──
+            let plySegments: number[] | undefined;
+            const segmentSplats: Splat[] = [];
+            let lastActiveSegment = -1;
+
             try {
-                const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, format, codec: codecChoice } = videoSettings;
+                const settings = videoSettings;
+                plySegments = settings.plySegments;
+                const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, format, codec: codecChoice } = settings;
+
+                // ── collect splats in upload order ──
+                if (plySegments && plySegments.length > 0) {
+                    segmentSplats.push(...(scene.getElementsByType(ElementType.splat) as Splat[])
+                        .filter(s => s.visible && s.numSplats > 0));
+                }
 
                 const target = fileStream ? new StreamTarget(fileStream) : new BufferTarget();
 
@@ -506,14 +523,42 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                     // manually update the camera so position and rotation are correct
                     scene.camera.onUpdate(0);
 
+                    // ── multi-PLY segmented rendering: toggle splat visibility ──
+                    let segmentChanged = false;
+                    if (plySegments && segmentSplats.length > 1) {
+                        const frameIndex = Math.floor(frameTime);
+                        let activeSegment = segmentSplats.length - 1;
+                        for (let s = 0; s < plySegments.length; s++) {
+                            if (frameIndex < plySegments[s]) {
+                                activeSegment = s;
+                                break;
+                            }
+                        }
+                        if (activeSegment !== lastActiveSegment) {
+                            lastActiveSegment = activeSegment;
+                            for (let i = 0; i < segmentSplats.length; i++) {
+                                segmentSplats[i].visible = (i === activeSegment);
+                            }
+                            segmentChanged = true;
+                        }
+                    }
+
                     // If a new PLY was loaded, sort and wait for completion
                     if (newSplat) {
-                        await sortAndWait([newSplat]);
+                        const toSort = [newSplat];
+                        // If segment also changed, sort the newly-visible splat too
+                        if (segmentChanged) {
+                            const newlyVisible = segmentSplats[lastActiveSegment];
+                            if (newlyVisible && newlyVisible !== newSplat) {
+                                toSort.push(newlyVisible);
+                            }
+                        }
+                        await sortAndWait(toSort);
                     } else {
-                        // No new PLY - sort existing splats if camera moved
+                        // No new PLY - sort existing splats if camera moved or segment changed
                         const pos = scene.camera.position;
                         const forward = scene.camera.forward;
-                        if (!last_pos.equals(pos) || !last_forward.equals(forward)) {
+                        if (segmentChanged || !last_pos.equals(pos) || !last_forward.equals(forward)) {
                             last_pos.copy(pos);
                             last_forward.copy(forward);
 
@@ -638,6 +683,11 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.lockedRenderMode = false;
                 scene.forceRender = true;       // camera likely moved, finish with normal render
+
+                // Restore all splat visibility after multi-PLY render
+                if (plySegments && segmentSplats.length > 1) {
+                    segmentSplats.forEach(s => { s.visible = true; });
+                }
 
                 events.fire('progressEnd');
             }
