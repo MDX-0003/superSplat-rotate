@@ -101,6 +101,11 @@ def main():
                              "degrees. Positive = look up, negative = look down.")
     parser.add_argument("--fov-x", type=float, default=80.0,
                         help="Horizontal FOV in degrees for all output cameras (default: 80.0)")
+    parser.add_argument("--direction", type=str, default="auto",
+                        choices=["auto", "same", "opposite"],
+                        help="Orbit direction: auto = follow capture order "
+                             "(same as 'same'), same = force same direction as "
+                             "capture, opposite = force reversed (default: auto)")
     args = parser.parse_args()
 
     # ----- resolve project directory --------------------------------------
@@ -164,6 +169,26 @@ def main():
         normal = -normal
         print(f"Normal flipped (align with camera down): [{normal[0]:.4f}, {normal[1]:.4f}, {normal[2]:.4f}]")
 
+    # ----- capture angular direction (decides orbit CW/CCW) ----------------
+    # Criterion A: mean signed angular step of consecutive keyframes in the
+    # (u1, u2) plane.  >0 => capture ids increase CCW in that frame, <0 => CW.
+    # The interpolation always samples in the +angle (u1->u2) direction, so
+    # "same as capture" means dir_sign = sign(mean_step); "opposite" negates it.
+    proj_pts = np.column_stack([(positions - center) @ u1, (positions - center) @ u2])
+    ang_steps = np.arctan2(
+        proj_pts[:-1, 0] * proj_pts[1:, 1] - proj_pts[:-1, 1] * proj_pts[1:, 0],
+        proj_pts[:-1, 0] * proj_pts[1:, 0] + proj_pts[:-1, 1] * proj_pts[1:, 1],
+    )
+    mean_step = float(np.mean(ang_steps))
+    if args.direction == "opposite":
+        dir_sign = -1.0 if mean_step >= 0 else 1.0
+    else:  # "auto" and "same": follow the capture order
+        dir_sign = 1.0 if mean_step >= 0 else -1.0
+    print(f"Capture angular step : {np.degrees(mean_step):+.3f} deg/frame "
+          f"({'+angle/CCW in (u1,u2)' if mean_step >= 0 else '-angle/CW in (u1,u2)'})")
+    print(f"Direction  : --direction {args.direction} -> "
+          f"{'+angle (u1->u2)' if dir_sign > 0 else '-angle (u2->u1)'}")
+
     # ----- pick anchors: anchor camera + auto max-angular-distance mate ----
     all_angles = []
     for d in data:
@@ -201,15 +226,24 @@ def main():
     N = args.total
     # place the two anchors exactly at their angles (in output angle space)
     # output angle 0 → ang_a,  output angle (N-1) → ang_b (going the "long way")
-    # Actually we want 300 uniform poses covering 0..2π, with anchors at their angles.
+    # Actually we want N uniform poses covering 0..2π, with anchors at their angles.
     # Always cover a full 360° circle — the two anchors define the ellipse
     # geometry (radii, rotation delta) applied uniformly around 2π.
-    sample_angles = np.linspace(ang_a, ang_a + 2 * np.pi, N, endpoint=False)
+    # dir_sign>0 travels +angle (u1→u2); dir_sign<0 travels -angle (u2→u1),
+    # in both cases starting at the anchor camera (output index 0).
+    if dir_sign < 0:
+        # anchor B expressed in the reversed traversal frame: its physical
+        # angle is ang_a + span, which in the (ang_a-2π, ang_a] window is
+        # ang_a - (2π - span)
+        ang_b_signed = ang_a - (2 * np.pi - span)
+    else:
+        ang_b_signed = ang_b
+    sample_angles = np.linspace(ang_a, ang_a + dir_sign * 2 * np.pi, N, endpoint=False)
     # ensure anchors land exactly at their positions
     sample_angles[0] = ang_a
     # find the closest sample to ang_b and pin it
-    idx_b = np.argmin(np.abs(sample_angles - ang_b))
-    sample_angles[idx_b] = ang_b
+    idx_b = np.argmin(np.abs(sample_angles - ang_b_signed))
+    sample_angles[idx_b] = ang_b_signed
 
     # ----- per-sample radius (linear between r_a and r_b) ---------------
     # radius at angle θ = r_a + (r_b - r_a) * (θ - ang_a) / (ang_b - ang_a)
@@ -346,7 +380,8 @@ def main():
 
     print(f"Output          : {len(output)} poses → {output_path}")
     print(f"Anchors         : id=0 → angle {ang_a:.4f}  "
-          f"id={idx_b} → angle {ang_b:.4f} (gap {np.degrees(best_dist):.1f}°)")
+          f"id={idx_b} → angle {sample_angles[idx_b]:.4f} "
+          f"(gap {np.degrees(best_dist):.1f}°)")
 
 
 if __name__ == "__main__":

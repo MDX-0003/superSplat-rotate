@@ -676,6 +676,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-height_offset', p.interpolate?.height_offset);
       pmSet('pm-i-pitch_offset', p.interpolate?.pitch_offset);
       pmSet('pm-i-fov_x', p.interpolate?.fov_x);
+      pmSet('pm-i-direction', p.interpolate?.direction, false, true);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
       pmToggleDenoise(); pmToggleRing();
@@ -718,6 +719,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.interpolate.height_offset=pF('pm-i-height_offset');
       params.interpolate.pitch_offset=pF('pm-i-pitch_offset');
       params.interpolate.fov_x=pF('pm-i-fov_x');
+      params.interpolate.direction=document.getElementById('pm-i-direction').value;
       let r=await fetch('/presets/save',{{method:'POST',
        headers:{{'Content-Type':'application/json'}},
        body:JSON.stringify({{name:pmName,params:params}})}});
@@ -869,6 +871,12 @@ def build_fuse_page(state: FuseState) -> str:
           <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
           <div class="fd"><label>pitch_offset (deg)</label><input type="text" id="pm-i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
           <div class="fd"><label>fov_x (deg)</label><input type="text" id="pm-i-fov_x" step="0.1" size="5"><span class="tip">输出相机水平视场角(度),默认80</span></div>
+          <div class="fd"><label>direction</label>
+            <select id="pm-i-direction" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="auto">auto（跟随拍摄方向）</option>
+              <option value="same">same（与拍摄一致）</option>
+              <option value="opposite">opposite（与拍摄相反）</option>
+            </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
         </div>
       </div>
     </div>
@@ -937,6 +945,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             "--height-offset", str(ip.get("height_offset", 0.0)),
             "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
             "--fov-x", str(ip.get("fov_x", 80.0)),
+            "--direction", str(ip.get("direction", "auto")),
         ]
         _log(f"interpolate: {' '.join(str(a) for a in interp_args)}")
         result = subprocess.run(
@@ -1485,6 +1494,12 @@ def _build_presets_page() -> str:
         <input type="text" id="i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
       <div class="field"><label>fov_x (deg)</label>
         <input type="text" id="i-fov_x" step="0.1" size="5"><span class="tip">输出相机水平视场角(度),默认80</span></div>
+      <div class="field"><label>direction</label>
+        <select id="i-direction" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="auto">auto（跟随拍摄方向）</option>
+          <option value="same">same（与拍摄一致）</option>
+          <option value="opposite">opposite（与拍摄相反）</option>
+        </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
@@ -1540,6 +1555,7 @@ def _build_presets_page() -> str:
       setVal('i-height_offset', p.interpolate?.height_offset);
       setVal('i-pitch_offset', p.interpolate?.pitch_offset);
       setVal('i-fov_x', p.interpolate?.fov_x);
+      setVal('i-direction', p.interpolate?.direction, false, true);
       toggleBias(); toggleDenoise(); toggleRing();
     }}
 
@@ -1630,6 +1646,7 @@ def _build_presets_page() -> str:
       params.interpolate.height_offset = floatVal('i-height_offset');
       params.interpolate.pitch_offset = floatVal('i-pitch_offset');
       params.interpolate.fov_x = floatVal('i-fov_x');
+      params.interpolate.direction = document.getElementById('i-direction').value;
       return params;
     }}
 

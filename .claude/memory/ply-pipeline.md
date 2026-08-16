@@ -25,6 +25,8 @@ interpolate → fuse → clip
 | fuse | `tills_ply/fuse_ply.py` | `cameras.json` + 多 PLY | `*combine*.ply`（圆柱区域融合） |
 | clip | `tills_ply/clip_ply.py` | `*combine*.ply` + `cameras.json` | `-clip/*.ply`（体积裁剪 + denoise） |
 
+> interpolate 步的旋转方向机制与 `--direction` 参数（auto/same/opposite）见 [interpolate-direction.md](interpolate-direction.md) —— 方向默认不再随 SVD 巧合，auto=跟随拍摄方向。
+
 ## 共享参数
 
 - `path`: 项目目录（如 `CameraData/08`）
@@ -40,7 +42,8 @@ interpolate → fuse → clip
   "interpolate": {
     "total": 300,
     "anchor_camera": "006",
-    "radius_scale": 1.0
+    "radius_scale": 1.0,
+    "direction": "auto"   # 2026-08 新增：auto/same/opposite（auto=跟随拍摄方向）
   },
   "fuse": {
     "radius_scale": 1.0,

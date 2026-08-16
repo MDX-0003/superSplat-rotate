@@ -7,7 +7,8 @@
             "interpolate": {
                 "total": 250,
                 "anchor_camera": "006",
-                "radius_scale": 0.8
+                "radius_scale": 0.8,
+                "direction": "auto"
             },
             "fuse": {
                 "radius_scale": 0.8,
