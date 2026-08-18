@@ -1660,7 +1660,7 @@ def main():
 
     # Set up logger
     logger = FileLogger(proj_dir, prefix="daemon")
-    logger.start_capture()  # tee all console output → console.log
+    logger.start_capture(prefix_time=True)  # tee console output → console.log ([HH:MM:SS] 前缀)
     logger.write("daemon", f"daemon started — project={cfg['project']} "
                   f"raw_images={cfg.get('raw_images_path', proj_dir / 'raw_images')}")
 
