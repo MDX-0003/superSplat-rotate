@@ -49,9 +49,23 @@ class CameraAnimTrack implements AnimTrack {
     // `poses` mutates; rebuilt lazily by the `keys` getter. Avoids allocating
     // a fresh length-N array on every access (e.g. per scrub frame).
     private _keysCache: number[] | null = null;
+    // Same as above, but a Set for O(1) membership tests (hasKey) used by the
+    // timeline remove-key button which fires once per scrub frame.
+    private _keysSet: Set<number> | null = null;
 
     private invalidateKeysCache() {
         this._keysCache = null;
+        this._keysSet = null;
+    }
+
+    // Lazily rebuild the keys cache (array + set) and return it.
+    private ensureKeysCache(): number[] {
+        if (this._keysCache === null) {
+            const arr = this.poses.map(p => p.frame);
+            this._keysCache = arr;
+            this._keysSet = new Set(arr);
+        }
+        return this._keysCache;
     }
 
     // Reusable scratch buffers for rebuildSpline / evaluate so we don't
@@ -92,10 +106,13 @@ class CameraAnimTrack implements AnimTrack {
     }
 
     get keys(): readonly number[] {
-        if (this._keysCache === null) {
-            this._keysCache = this.poses.map(p => p.frame);
-        }
-        return this._keysCache;
+        return this.ensureKeysCache();
+    }
+
+    // O(1) membership test used by per-frame UI (remove-key button state).
+    hasKey(frame: number): boolean {
+        this.ensureKeysCache();
+        return this._keysSet.has(frame);
     }
 
     addKey(frame: number): boolean {

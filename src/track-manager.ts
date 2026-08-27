@@ -35,6 +35,12 @@ const registerTrackManagerEvents = (events: Events) => {
         return track ? track.keys : [];
     });
 
+    // O(1) membership test used by per-frame UI (e.g. remove-key button state)
+    events.function('track.hasKey', (frame: number) => {
+        const track = getActiveTrack();
+        return track ? track.hasKey(frame) : false;
+    });
+
     // Add key to active track
     events.on('track.addKey', (frame?: number) => {
         const keyFrame = frame ?? events.invoke('timeline.frame');
