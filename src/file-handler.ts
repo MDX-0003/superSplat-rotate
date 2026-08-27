@@ -200,6 +200,12 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
             return (avalue && bvalue) ? parseInt(avalue, 10) - parseInt(bvalue, 10) : 0;
         };
 
+        // Collect all poses first, then dispatch a single batch load so the
+        // spline and timeline DOM are rebuilt once (O(N)) instead of once per
+        // frame (O(N^2)).
+        const timelinePoses: any[] = [];
+        const gtPoses: any[] = [];
+
         json.sort(sorter).forEach((pose: any, i: number) => {
             if (pose.hasOwnProperty('position') && pose.hasOwnProperty('rotation')) {
                 const p = new Vec3(pose.position);
@@ -247,12 +253,16 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
                     rotation,
                     intrinsics: poseIntrinsics
                 };
-                if (toGt) events.fire('camera.addImportedPose', posePayload);
-                if (toTimeline) events.fire('camera.addPose', posePayload);
+                if (toTimeline) timelinePoses.push(posePayload);
+                if (toGt) gtPoses.push(posePayload);
             }
         });
 
+        // Set total frame count before batch-loading the track so the spline
+        // rebuild sees the correct duration.
         if (toTimeline) events.fire('timeline.setFrames', json.length);
+        if (toTimeline) events.fire('camera.setPoses', timelinePoses);
+        if (toGt) events.fire('camera.setImportedPoses', gtPoses);
     }
 };
 

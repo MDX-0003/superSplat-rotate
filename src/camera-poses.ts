@@ -425,6 +425,30 @@ const registerCameraPosesEvents = (events: Events) => {
         events.fire('camera.importedPosesChanged');
     });
 
+    // Batch-load timeline poses (replaces entire track in one shot).
+    // Used by JSON/camera-traj import so we rebuild the spline and fire
+    // 'track.keysLoaded' a single time instead of N 'track.keyAdded'.
+    events.on('camera.setPoses', (poses: Pose[]) => {
+        track.loadPoses(poses.map(p => ({
+            name: p.name,
+            frame: p.frame,
+            position: p.position.clone(),
+            target: p.target.clone(),
+            fov: p.fov ?? events.functions.has('camera.fov') ? events.invoke('camera.fov') : 60,
+            rotation: p.rotation?.clone(),
+            intrinsics: p.intrinsics ? { ...p.intrinsics } : undefined
+        })));
+    });
+
+    // Batch-load GT poses (replaces entire imported set in one shot).
+    events.on('camera.setImportedPoses', (poses: Pose[]) => {
+        importedPoses.length = 0;
+        for (const p of poses) {
+            importedPoses.push(clonePose(p));
+        }
+        events.fire('camera.importedPosesChanged');
+    });
+
     events.on('camera.clearImportedPoses', () => {
         if (importedPoses.length > 0) {
             importedPoses.length = 0;
