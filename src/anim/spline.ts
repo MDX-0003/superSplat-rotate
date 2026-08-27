@@ -23,10 +23,19 @@ class CubicSpline {
         } else if (time >= times[last]) {
             this.getKnot(last, result);
         } else {
-            let seg = 0;
-            while (time >= times[seg + 1]) {
-                seg++;
+            // Binary search for the largest segment index whose start time <= `time`.
+            // `times` is ascending; we want seg such that times[seg] <= time < times[seg+1].
+            let lo = 0;
+            let hi = last;
+            while (lo < hi) {
+                const mid = (lo + hi + 1) >> 1;   // upper mid to avoid infinite loop
+                if (times[mid] <= time) {
+                    lo = mid;
+                } else {
+                    hi = mid - 1;
+                }
             }
+            const seg = lo;
             this.evaluateSegment(seg, (time - times[seg]) / (times[seg + 1] - times[seg]), result);
         }
     }

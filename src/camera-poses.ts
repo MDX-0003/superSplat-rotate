@@ -347,22 +347,62 @@ class CameraAnimTrack implements AnimTrack {
                 fov: 0
             };
 
-            const findSegment = (frame: number) => {
-                for (let i = 0; i < orderedPoses.length - 1; i++) {
-                    const a = orderedPoses[i];
-                    const b = orderedPoses[i + 1];
-                    if (frame >= a.frame && frame <= b.frame) {
-                        const span = b.frame - a.frame;
-                        return {
-                            a,
-                            b,
-                            t: span > 0 ? (frame - a.frame) / span : 0
-                        };
+            // Binary search for the first pose whose frame >= target. Since
+            // orderedPoses is sorted ascending by frame, this lets both the
+            // exact-hit test and the segment lookup run in O(log N) instead of
+            // the original linear find() + linear findSegment() loops that ran
+            // on every scrub frame.
+            const bisectLeft = (target: number) => {
+                let lo = 0;
+                let hi = orderedPoses.length;
+                while (lo < hi) {
+                    const mid = (lo + hi) >> 1;
+                    if (orderedPoses[mid].frame < target) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
                     }
                 }
+                return lo;
+            };
 
+            const findSegment = (frame: number) => {
+                const n = orderedPoses.length;
+                if (n < 2) return null;
+
+                // index of first pose with frame >= `frame`
+                const i = bisectLeft(frame);
+
+                // Interior segment [i-1, i]: covers frame strictly between two
+                // keys, AND frame exactly equal to an interior key (i in [1, n-1]).
+                // Also covers frame === first.frame (i === 0, exact hit on key 0):
+                // the original linear loop matched the first segment in that case,
+                // so interior must take priority over the loop branch below.
+                if (i > 0 && i < n) {
+                    const a = orderedPoses[i - 1];
+                    const b = orderedPoses[i];
+                    const span = b.frame - a.frame;
+                    return {
+                        a,
+                        b,
+                        t: span > 0 ? (frame - a.frame) / span : 0
+                    };
+                }
+                if (i === 0 && n > 1 && orderedPoses[0].frame === frame) {
+                    // exact hit on the first key -> segment [0, 1], t = 0
+                    const a = orderedPoses[0];
+                    const b = orderedPoses[1];
+                    const span = b.frame - a.frame;
+                    return {
+                        a,
+                        b,
+                        t: 0
+                    };
+                }
+
+                // past the last key or before the first: loop back
                 const first = orderedPoses[0];
-                const last = orderedPoses[orderedPoses.length - 1];
+                const last = orderedPoses[n - 1];
                 const loopSpan = (duration - last.frame) + first.frame;
                 if (loopSpan > 0 && (frame >= last.frame || frame <= first.frame)) {
                     return {
@@ -378,9 +418,10 @@ class CameraAnimTrack implements AnimTrack {
             };
 
             this.onTimelineChange = (frame: number) => {
-                const exactPose = orderedPoses.find(p => Math.abs(p.frame - frame) < 1e-6);
-                if (exactPose) {
-                    this.events.fire('camera.setPose', exactPose, 0);
+                // Exact-hit test via binary search (replaces O(N) find()).
+                const i = bisectLeft(frame);
+                if (i < orderedPoses.length && orderedPoses[i].frame === frame) {
+                    this.events.fire('camera.setPose', orderedPoses[i], 0);
                     return;
                 }
 
