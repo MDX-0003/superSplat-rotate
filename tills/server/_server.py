@@ -23,18 +23,38 @@ from typing import Callable
 
 class _TeeStream:
     """Writes to two streams simultaneously — used to capture all print()
-    output into a console.log file while still showing it on screen."""
+    output into a console.log file while still showing it on screen.
 
-    def __init__(self, original, file_handle):
+    When ``prefix_time`` is True, every complete line written to the file is
+    prefixed with ``[HH:MM:SS] `` (the console/original stream stays verbatim).
+    Partial lines are buffered until a newline arrives (or until flush), so
+    multi-line / chunked writes still get one timestamp per line.
+    """
+
+    def __init__(self, original, file_handle, prefix_time=False):
         self.original = original
         self.file = file_handle
+        self.prefix_time = prefix_time
+        self._buf = ""
 
     def write(self, data):
         self.original.write(data)
-        self.file.write(data)
+        if self.prefix_time:
+            self._buf += data
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                ts = _time.strftime("%H:%M:%S")
+                self.file.write(f"[{ts}] {line}\n")
+        else:
+            self.file.write(data)
 
     def flush(self):
         self.original.flush()
+        if self.prefix_time and self._buf:
+            # trailing partial line without '\n' — flush it with a prefix
+            ts = _time.strftime("%H:%M:%S")
+            self.file.write(f"[{ts}] {self._buf}\n")
+            self._buf = ""
         self.file.flush()
 
     def fileno(self):
@@ -68,11 +88,14 @@ class FileLogger:
         self._original_stderr = None
         print(f"  logs → {self._log_dir}")
 
-    def start_capture(self):
+    def start_capture(self, prefix_time=False):
         """Redirect sys.stdout + sys.stderr to also write to ``console.log``.
 
         Call once after construction and before any work starts.  Safe to
         call even when already capturing (no-op on second call).
+
+        ``prefix_time=True`` prefixes each console.log line with ``[HH:MM:SS]``
+        (default False keeps the raw verbatim capture).
         """
         if self._capture_handle is not None:
             return  # already capturing
@@ -80,8 +103,10 @@ class FileLogger:
         self._capture_handle = open(path, "a", encoding="utf-8", buffering=1)
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
-        sys.stdout = _TeeStream(self._original_stdout, self._capture_handle)
-        sys.stderr = _TeeStream(self._original_stderr, self._capture_handle)
+        sys.stdout = _TeeStream(self._original_stdout, self._capture_handle,
+                                prefix_time)
+        sys.stderr = _TeeStream(self._original_stderr, self._capture_handle,
+                                prefix_time)
 
     def stop_capture(self):
         """Restore original sys.stdout / sys.stderr (called by ``close()``)."""

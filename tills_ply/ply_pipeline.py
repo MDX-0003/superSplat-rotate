@@ -284,6 +284,7 @@ def build_interpolate_args(preset):
         "--height-offset", str(ip.get("height_offset", 0.0)),
         "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
         "--fov-x", str(ip.get("fov_x", 80.0)),
+        "--direction", str(ip.get("direction", "auto")),
     ]
     return args
 

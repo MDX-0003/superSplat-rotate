@@ -19,7 +19,17 @@
     "sags_path": "本机 SAGS-Post 仓库的绝对路径（各机路径一致；不跑 SAGS 的机器可省略）"
   },
   "tmp":[
-    
+    {
+      "id": "worker1",
+      "hostname": "DESKTOP-PD6ICK9",
+      "ip": "10.10.4.101",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": "C:/Users/admin/.ssh/id_ed25519",
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat",
+      "sags_path": "C:/code/SAGS"
+    },
     {
       "id": "worker2",
       "hostname": "DESKTOP-HJIJ16G",
@@ -66,11 +76,10 @@
       "supersplat_path": "C:/code/supersplat",
       "sags_path": "C:/code/SAGS"
     },
-    
     {
-      "id": "worker1",
-      "hostname": "DESKTOP-PD6ICK9",
-      "ip": "10.10.4.101",
+      "id": "worker2",
+      "hostname": "DESKTOP-HJIJ16G",
+      "ip": "10.10.4.102",
       "ssh_user": "admin",
       "ssh_port": 22,
       "ssh_key_path": "C:/Users/admin/.ssh/id_ed25519",
@@ -82,6 +91,17 @@
       "id": "worker4",
       "hostname": "DESKTOP-TJAFIK8",
       "ip": "10.10.4.104",
+      "ssh_user": "admin",
+      "ssh_port": 22,
+      "ssh_key_path": "C:/Users/admin/.ssh/id_ed25519",
+      "litegs_path": "C:/code/LiteGSWin",
+      "supersplat_path": "C:/code/supersplat",
+      "sags_path": "C:/code/SAGS"
+    },
+    {
+      "id": "worker1",
+      "hostname": "DESKTOP-PD6ICK9",
+      "ip": "10.10.4.101",
       "ssh_user": "admin",
       "ssh_port": 22,
       "ssh_key_path": "C:/Users/admin/.ssh/id_ed25519",
