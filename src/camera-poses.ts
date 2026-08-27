@@ -54,6 +54,12 @@ class CameraAnimTrack implements AnimTrack {
         this._keysCache = null;
     }
 
+    // Reusable scratch buffers for rebuildSpline / evaluate so we don't
+    // allocate new arrays on every scrub frame during playback.
+    private _splineTimes: number[] = [];
+    private _splinePoints: number[] = [];
+    private _evalResult: number[] = [];
+
     constructor(events: Events) {
         this.events = events;
 
@@ -183,6 +189,9 @@ class CameraAnimTrack implements AnimTrack {
     clear(): void {
         this.poses.length = 0;
         this.invalidateKeysCache();
+        this._splineTimes.length = 0;
+        this._splinePoints.length = 0;
+        this._evalResult.length = 0;
         this.onTimelineChange = null;
         this.events.fire('track.keysCleared');
     }
@@ -292,14 +301,19 @@ class CameraAnimTrack implements AnimTrack {
             };
         };
 
-        const orderedPoses = this.poses.slice()
-        .filter(a => a.frame < duration)
-        .sort((a, b) => a.frame - b.frame);
-
-        const times = orderedPoses.map(p => p.frame);
-        const points: number[] = [];
+        // Sort a snapshot of poses by frame, then collect in a single pass into
+        // the reusable _splineTimes/_splinePoints buffers (avoiding the old
+        // slice().filter().sort() + separate map() that tripled the work and
+        // allocated two extra length-N arrays per rebuild).
+        const orderedPoses = this.poses.slice().sort((a, b) => a.frame - b.frame);
+        const times = this._splineTimes;
+        const points = this._splinePoints;
+        times.length = 0;
+        points.length = 0;
         for (let i = 0; i < orderedPoses.length; ++i) {
             const p = orderedPoses[i];
+            if (p.frame >= duration) continue;       // drop frames past the timeline end
+            times.push(p.frame);
             points.push(p.position.x, p.position.y, p.position.z);
             points.push(p.target.x, p.target.y, p.target.z);
             points.push(p.fov);
@@ -307,7 +321,7 @@ class CameraAnimTrack implements AnimTrack {
 
         if (orderedPoses.length > 1) {
             const spline = CubicSpline.fromPointsLooping(duration, times, points, smoothness);
-            const result: number[] = [];
+            const result = this._evalResult;   // reused across evaluates within this rebuild
             const pose: Pose = {
                 name: 'camera_interp',
                 frame: 0,
