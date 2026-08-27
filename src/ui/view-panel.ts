@@ -765,6 +765,22 @@ class ViewPanel extends Container {
             return `${index}: ${pose.name}`;
         };
 
+        // Binary search for a pose whose frame === targetFrame.
+        // gtCameraPoses is kept sorted ascending by frame (see refreshGtCameraPoses),
+        // so this replaces the O(N) findIndex that used to run on every scrub frame.
+        const indexOfGtFrame = (targetFrame: number) => {
+            let lo = 0;
+            let hi = gtCameraPoses.length - 1;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                const f = gtCameraPoses[mid].frame;
+                if (f === targetFrame) return mid;
+                if (f < targetFrame) lo = mid + 1;
+                else hi = mid - 1;
+            }
+            return -1;
+        };
+
         const syncGtCameraControls = () => {
             const hasGtCameras = gtCameraPoses.length > 0;
             const maxIndex = Math.max(0, gtCameraPoses.length - 1);
@@ -822,7 +838,7 @@ class ViewPanel extends Container {
             .sort((a, b) => a.frame - b.frame);
 
             const frame = events.invoke('timeline.frame');
-            const frameIndex = gtCameraPoses.findIndex(pose => pose.frame === frame);
+            const frameIndex = indexOfGtFrame(frame);
             if (frameIndex !== -1) {
                 gtCameraIndex = frameIndex;
             }
@@ -940,7 +956,7 @@ class ViewPanel extends Container {
         });
 
         events.on('timeline.frame', (frame: number) => {
-            const frameIndex = gtCameraPoses.findIndex(pose => pose.frame === frame);
+            const frameIndex = indexOfGtFrame(frame);
             if (frameIndex !== -1) {
                 setGtCameraIndex(frameIndex, false);
             }
