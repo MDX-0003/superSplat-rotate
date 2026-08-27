@@ -45,6 +45,14 @@ class CameraAnimTrack implements AnimTrack {
     private poses: Pose[] = [];
     private events: Events;
     private onTimelineChange: ((frame: number) => void) | null = null;
+    // Cached array of pose.frame values. Invalidated (set to null) whenever
+    // `poses` mutates; rebuilt lazily by the `keys` getter. Avoids allocating
+    // a fresh length-N array on every access (e.g. per scrub frame).
+    private _keysCache: number[] | null = null;
+
+    private invalidateKeysCache() {
+        this._keysCache = null;
+    }
 
     constructor(events: Events) {
         this.events = events;
@@ -78,7 +86,10 @@ class CameraAnimTrack implements AnimTrack {
     }
 
     get keys(): readonly number[] {
-        return this.poses.map(p => p.frame);
+        if (this._keysCache === null) {
+            this._keysCache = this.poses.map(p => p.frame);
+        }
+        return this._keysCache;
     }
 
     addKey(frame: number): boolean {
@@ -171,6 +182,7 @@ class CameraAnimTrack implements AnimTrack {
 
     clear(): void {
         this.poses.length = 0;
+        this.invalidateKeysCache();
         this.onTimelineChange = null;
         this.events.fire('track.keysCleared');
     }
@@ -245,6 +257,10 @@ class CameraAnimTrack implements AnimTrack {
     }
 
     private rebuildSpline(): void {
+        // Any mutation that ends here changes the set of key frames, so the
+        // keys cache must be invalidated before we leave (covers addKey /
+        // removeKey / moveKey / copyKey / restore / addPose / loadPoses).
+        this.invalidateKeysCache();
         const duration = this.events.invoke('timeline.frames');
         const smoothness = this.events.invoke('timeline.smoothness');
         const interpolatedRotation = new Quat();
