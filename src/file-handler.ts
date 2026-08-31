@@ -200,6 +200,12 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
             return (avalue && bvalue) ? parseInt(avalue, 10) - parseInt(bvalue, 10) : 0;
         };
 
+        // Collect all poses first, then dispatch a single batch load so the
+        // spline and timeline DOM are rebuilt once (O(N)) instead of once per
+        // frame (O(N^2)).
+        const timelinePoses: any[] = [];
+        const gtPoses: any[] = [];
+
         json.sort(sorter).forEach((pose: any, i: number) => {
             if (pose.hasOwnProperty('position') && pose.hasOwnProperty('rotation')) {
                 const p = new Vec3(pose.position);
@@ -247,12 +253,16 @@ const loadCameraPoses = async (file: ImportFile, events: Events, mode: 'gt' | 't
                     rotation,
                     intrinsics: poseIntrinsics
                 };
-                if (toGt) events.fire('camera.addImportedPose', posePayload);
-                if (toTimeline) events.fire('camera.addPose', posePayload);
+                if (toTimeline) timelinePoses.push(posePayload);
+                if (toGt) gtPoses.push(posePayload);
             }
         });
 
+        // Set total frame count before batch-loading the track so the spline
+        // rebuild sees the correct duration.
         if (toTimeline) events.fire('timeline.setFrames', json.length);
+        if (toTimeline) events.fire('camera.setPoses', timelinePoses);
+        if (toGt) events.fire('camera.setImportedPoses', gtPoses);
     }
 };
 
@@ -301,6 +311,11 @@ const loadImagesTxt = async (file: ImportFile, events: Events, mode: 'gt' | 'tim
     if (toGt) events.fire('camera.clearImportedPoses');
     if (toTimeline) events.fire('camera.clearPoses');
 
+    // Collect then batch-dispatch (see loadCameraPoses) so the spline and GT
+    // dropdown are rebuilt once instead of once per pose.
+    const timelinePoses: any[] = [];
+    const gtPoses: any[] = [];
+
     poses.forEach((pose, i) => {
         const { w, x, y, z, tx, ty, tz } = pose;
 
@@ -317,11 +332,13 @@ const loadImagesTxt = async (file: ImportFile, events: Events, mode: 'gt' | 'tim
             position: new Vec3(-t.x, -t.y, t.z),
             target: new Vec3(-vec.x, -vec.y, vec.z)
         };
-        if (toGt) events.fire('camera.addImportedPose', posePayload);
-        if (toTimeline) events.fire('camera.addPose', posePayload);
+        if (toTimeline) timelinePoses.push(posePayload);
+        if (toGt) gtPoses.push(posePayload);
     });
 
     if (toTimeline) events.fire('timeline.setFrames', poses.length);
+    if (toTimeline) events.fire('camera.setPoses', timelinePoses);
+    if (toGt) events.fire('camera.setImportedPoses', gtPoses);
 };
 
 // initialize file handler events

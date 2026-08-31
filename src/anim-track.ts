@@ -6,6 +6,9 @@ interface AnimTrack {
     /** Array of frame numbers where keyframes exist */
     readonly keys: readonly number[];
 
+    /** O(1) membership test for a keyframe at the given frame. */
+    hasKey(frame: number): boolean;
+
     /**
      * Add a keyframe at the specified frame, capturing current state.
      * If a key already exists at this frame, it will be updated.

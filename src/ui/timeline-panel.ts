@@ -390,11 +390,10 @@ class TimelinePanel extends Container {
             events.fire('track.removeKey', frame);
         });
 
-        // Helper to check if the current frame has a key
+        // Helper to check if the current frame has a key (O(1) via track.hasKey)
         const canDeleteKey = () => {
-            const keys = events.invoke('track.keys') as number[] ?? [];
             const frame = events.invoke('timeline.frame');
-            return keys.includes(frame);
+            return events.invoke('track.hasKey', frame) as boolean;
         };
 
         // Update key button states

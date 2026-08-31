@@ -45,6 +45,34 @@ class CameraAnimTrack implements AnimTrack {
     private poses: Pose[] = [];
     private events: Events;
     private onTimelineChange: ((frame: number) => void) | null = null;
+    // Cached array of pose.frame values. Invalidated (set to null) whenever
+    // `poses` mutates; rebuilt lazily by the `keys` getter. Avoids allocating
+    // a fresh length-N array on every access (e.g. per scrub frame).
+    private _keysCache: number[] | null = null;
+    // Same as above, but a Set for O(1) membership tests (hasKey) used by the
+    // timeline remove-key button which fires once per scrub frame.
+    private _keysSet: Set<number> | null = null;
+
+    private invalidateKeysCache() {
+        this._keysCache = null;
+        this._keysSet = null;
+    }
+
+    // Lazily rebuild the keys cache (array + set) and return it.
+    private ensureKeysCache(): number[] {
+        if (this._keysCache === null) {
+            const arr = this.poses.map(p => p.frame);
+            this._keysCache = arr;
+            this._keysSet = new Set(arr);
+        }
+        return this._keysCache;
+    }
+
+    // Reusable scratch buffers for rebuildSpline / evaluate so we don't
+    // allocate new arrays on every scrub frame during playback.
+    private _splineTimes: number[] = [];
+    private _splinePoints: number[] = [];
+    private _evalResult: number[] = [];
 
     constructor(events: Events) {
         this.events = events;
@@ -78,7 +106,13 @@ class CameraAnimTrack implements AnimTrack {
     }
 
     get keys(): readonly number[] {
-        return this.poses.map(p => p.frame);
+        return this.ensureKeysCache();
+    }
+
+    // O(1) membership test used by per-frame UI (remove-key button state).
+    hasKey(frame: number): boolean {
+        this.ensureKeysCache();
+        return this._keysSet.has(frame);
     }
 
     addKey(frame: number): boolean {
@@ -171,6 +205,10 @@ class CameraAnimTrack implements AnimTrack {
 
     clear(): void {
         this.poses.length = 0;
+        this.invalidateKeysCache();
+        this._splineTimes.length = 0;
+        this._splinePoints.length = 0;
+        this._evalResult.length = 0;
         this.onTimelineChange = null;
         this.events.fire('track.keysCleared');
     }
@@ -245,6 +283,10 @@ class CameraAnimTrack implements AnimTrack {
     }
 
     private rebuildSpline(): void {
+        // Any mutation that ends here changes the set of key frames, so the
+        // keys cache must be invalidated before we leave (covers addKey /
+        // removeKey / moveKey / copyKey / restore / addPose / loadPoses).
+        this.invalidateKeysCache();
         const duration = this.events.invoke('timeline.frames');
         const smoothness = this.events.invoke('timeline.smoothness');
         const interpolatedRotation = new Quat();
@@ -276,14 +318,19 @@ class CameraAnimTrack implements AnimTrack {
             };
         };
 
-        const orderedPoses = this.poses.slice()
-        .filter(a => a.frame < duration)
-        .sort((a, b) => a.frame - b.frame);
-
-        const times = orderedPoses.map(p => p.frame);
-        const points: number[] = [];
+        // Sort a snapshot of poses by frame, then collect in a single pass into
+        // the reusable _splineTimes/_splinePoints buffers (avoiding the old
+        // slice().filter().sort() + separate map() that tripled the work and
+        // allocated two extra length-N arrays per rebuild).
+        const orderedPoses = this.poses.slice().sort((a, b) => a.frame - b.frame);
+        const times = this._splineTimes;
+        const points = this._splinePoints;
+        times.length = 0;
+        points.length = 0;
         for (let i = 0; i < orderedPoses.length; ++i) {
             const p = orderedPoses[i];
+            if (p.frame >= duration) continue;       // drop frames past the timeline end
+            times.push(p.frame);
             points.push(p.position.x, p.position.y, p.position.z);
             points.push(p.target.x, p.target.y, p.target.z);
             points.push(p.fov);
@@ -291,7 +338,7 @@ class CameraAnimTrack implements AnimTrack {
 
         if (orderedPoses.length > 1) {
             const spline = CubicSpline.fromPointsLooping(duration, times, points, smoothness);
-            const result: number[] = [];
+            const result = this._evalResult;   // reused across evaluates within this rebuild
             const pose: Pose = {
                 name: 'camera_interp',
                 frame: 0,
@@ -300,22 +347,62 @@ class CameraAnimTrack implements AnimTrack {
                 fov: 0
             };
 
-            const findSegment = (frame: number) => {
-                for (let i = 0; i < orderedPoses.length - 1; i++) {
-                    const a = orderedPoses[i];
-                    const b = orderedPoses[i + 1];
-                    if (frame >= a.frame && frame <= b.frame) {
-                        const span = b.frame - a.frame;
-                        return {
-                            a,
-                            b,
-                            t: span > 0 ? (frame - a.frame) / span : 0
-                        };
+            // Binary search for the first pose whose frame >= target. Since
+            // orderedPoses is sorted ascending by frame, this lets both the
+            // exact-hit test and the segment lookup run in O(log N) instead of
+            // the original linear find() + linear findSegment() loops that ran
+            // on every scrub frame.
+            const bisectLeft = (target: number) => {
+                let lo = 0;
+                let hi = orderedPoses.length;
+                while (lo < hi) {
+                    const mid = (lo + hi) >> 1;
+                    if (orderedPoses[mid].frame < target) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
                     }
                 }
+                return lo;
+            };
 
+            const findSegment = (frame: number) => {
+                const n = orderedPoses.length;
+                if (n < 2) return null;
+
+                // index of first pose with frame >= `frame`
+                const i = bisectLeft(frame);
+
+                // Interior segment [i-1, i]: covers frame strictly between two
+                // keys, AND frame exactly equal to an interior key (i in [1, n-1]).
+                // Also covers frame === first.frame (i === 0, exact hit on key 0):
+                // the original linear loop matched the first segment in that case,
+                // so interior must take priority over the loop branch below.
+                if (i > 0 && i < n) {
+                    const a = orderedPoses[i - 1];
+                    const b = orderedPoses[i];
+                    const span = b.frame - a.frame;
+                    return {
+                        a,
+                        b,
+                        t: span > 0 ? (frame - a.frame) / span : 0
+                    };
+                }
+                if (i === 0 && n > 1 && orderedPoses[0].frame === frame) {
+                    // exact hit on the first key -> segment [0, 1], t = 0
+                    const a = orderedPoses[0];
+                    const b = orderedPoses[1];
+                    const span = b.frame - a.frame;
+                    return {
+                        a,
+                        b,
+                        t: 0
+                    };
+                }
+
+                // past the last key or before the first: loop back
                 const first = orderedPoses[0];
-                const last = orderedPoses[orderedPoses.length - 1];
+                const last = orderedPoses[n - 1];
                 const loopSpan = (duration - last.frame) + first.frame;
                 if (loopSpan > 0 && (frame >= last.frame || frame <= first.frame)) {
                     return {
@@ -331,9 +418,10 @@ class CameraAnimTrack implements AnimTrack {
             };
 
             this.onTimelineChange = (frame: number) => {
-                const exactPose = orderedPoses.find(p => Math.abs(p.frame - frame) < 1e-6);
-                if (exactPose) {
-                    this.events.fire('camera.setPose', exactPose, 0);
+                // Exact-hit test via binary search (replaces O(N) find()).
+                const i = bisectLeft(frame);
+                if (i < orderedPoses.length && orderedPoses[i].frame === frame) {
+                    this.events.fire('camera.setPose', orderedPoses[i], 0);
                     return;
                 }
 
@@ -422,6 +510,30 @@ const registerCameraPosesEvents = (events: Events) => {
 
     events.on('camera.addImportedPose', (pose: Pose) => {
         importedPoses.push(clonePose(pose));
+        events.fire('camera.importedPosesChanged');
+    });
+
+    // Batch-load timeline poses (replaces entire track in one shot).
+    // Used by JSON/camera-traj import so we rebuild the spline and fire
+    // 'track.keysLoaded' a single time instead of N 'track.keyAdded'.
+    events.on('camera.setPoses', (poses: Pose[]) => {
+        track.loadPoses(poses.map(p => ({
+            name: p.name,
+            frame: p.frame,
+            position: p.position.clone(),
+            target: p.target.clone(),
+            fov: p.fov ?? events.functions.has('camera.fov') ? events.invoke('camera.fov') : 60,
+            rotation: p.rotation?.clone(),
+            intrinsics: p.intrinsics ? { ...p.intrinsics } : undefined
+        })));
+    });
+
+    // Batch-load GT poses (replaces entire imported set in one shot).
+    events.on('camera.setImportedPoses', (poses: Pose[]) => {
+        importedPoses.length = 0;
+        for (const p of poses) {
+            importedPoses.push(clonePose(p));
+        }
         events.fire('camera.importedPosesChanged');
     });
 
