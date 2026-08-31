@@ -854,6 +854,16 @@ def _probe_sags_worker(state: TrainState, fs) -> WorkerNode | None:
     return None
 
 
+def _sags_out_dir(worker: WorkerNode, fs) -> Path:
+    """Per-frame SAGS output dir: <sags_path>/result/<sub_dir>/<sub_dir>-<frame_id>.
+
+    One directory per frame so repeated SAGS runs for different frames of the
+    same date never overwrite each other's report.json / views/* artifacts.
+    """
+    return (Path(worker.sags_path) / "result" / fs.sub_dir /
+            f"{fs.sub_dir}-{fs.frame_id}")
+
+
 def _build_sags_cmd(cfg: dict, worker: WorkerNode, fs) -> str | None:
     """Build the SAGS shell command for a worker (host or remote).
 
@@ -869,7 +879,7 @@ def _build_sags_cmd(cfg: dict, worker: WorkerNode, fs) -> str | None:
     input_ply = str(Path(worker.litegs_path) / "results" / fs.sub_dir /
                     f"{fs.sub_dir}-{fs.frame_id}.ply")
     sparse = str(_sags_sparse_dir(worker, fs))
-    out_dir = str(sags_root / "result" / fs.sub_dir)
+    out_dir = str(_sags_out_dir(worker, fs))
 
     if worker.is_host:
         # fast local sanity checks (remote fails loudly if data was cleaned)
@@ -896,7 +906,11 @@ def _read_sags_report(worker: WorkerNode, report_path: Path) -> tuple[bool, str]
             data = json.loads(report_path.read_text(encoding="utf-8"))
             return True, str(data.get("status", ""))
         else:
-            rp = str(report_path).replace("\\", "/")
+            # cmd.exe's `type` builtin rejects QUOTED forward-slash paths
+            # ("The syntax of the command is incorrect", rc=1) — unlike
+            # `if exist` / `cd` / `mkdir`, which tolerate them. Force
+            # backslashes here; scp calls elsewhere keep forward slashes.
+            rp = str(report_path).replace("/", "\\")
             r = ssh_run(worker, f'if exist "{rp}" type "{rp}"', timeout=20)
             if r.returncode != 0 or not (r.stdout or "").strip():
                 return False, ""
@@ -1479,13 +1493,12 @@ def main_loop(state: TrainState, cfg: dict,
                 if fs is None:
                     continue
 
-                report_path = (Path(worker.sags_path) / "result" /
-                               fs.sub_dir / "report.json")
+                report_path = _sags_out_dir(worker, fs) / "report.json"
                 if rc == 0:
                     _ok, status = _read_sags_report(worker, report_path)
                     if _ok and status == "ok":
                         remote_ply = str(
-                            Path(worker.sags_path) / "result" / fs.sub_dir /
+                            _sags_out_dir(worker, fs) /
                             f"{fs.sub_dir}-{fs.frame_id}-sags.ply")
                         local_ply = proj_dir / f"{fs.sub_dir}-{fs.frame_id}-sags.ply"
                         if _collect_sags_ply(worker, remote_ply, local_ply):

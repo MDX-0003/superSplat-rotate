@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "../SpacetimeSlicer"
+		},
+		{
+			"path": "../SAGS"
 		}
 	],
 	"settings": {}

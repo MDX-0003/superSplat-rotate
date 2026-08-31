@@ -8,10 +8,10 @@
             "interpolate": {
                 "total": 160,
                 "anchor_camera": "001",
-                "radius_scale": 0.9,
+                "radius_scale": 0.95,
                 "height_offset": 0,
                 "pitch_offset": 0,
-                "fov_x": 75,
+                "fov_x": 70,
                 "direction": "auto"
             },
             "fuse": {
@@ -52,10 +52,10 @@
             "interpolate": {
                 "total": 160,
                 "anchor_camera": "001",
-                "radius_scale": 0.9,
+                "radius_scale": 0.95,
                 "height_offset": 0,
                 "pitch_offset": 0,
-                "fov_x": 75,
+                "fov_x": 70,
                 "direction": "auto"
             },
             "fuse": {
@@ -96,10 +96,10 @@
             "interpolate": {
                 "total": 160,
                 "anchor_camera": "001",
-                "radius_scale": 0.9,
+                "radius_scale": 0.95,
                 "height_offset": 0,
                 "pitch_offset": 0,
-                "fov_x": 75,
+                "fov_x": 70,
                 "direction": "auto"
             },
             "fuse": {
@@ -140,10 +140,10 @@
             "interpolate": {
                 "total": 160,
                 "anchor_camera": "001",
-                "radius_scale": 0.9,
+                "radius_scale": 0.95,
                 "height_offset": 0,
                 "pitch_offset": 0,
-                "fov_x": 75,
+                "fov_x": 70,
                 "direction": "auto"
             },
             "fuse": {

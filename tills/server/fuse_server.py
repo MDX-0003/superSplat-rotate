@@ -105,8 +105,8 @@ class FuseState:
 
         # ── fuse PLYs: <proj>/*.ply, exclude "combine" ──
         #    Index (1-based) is the position in the FULL sorted glob
-        #    (matching v6 behaviour).  fuse_ply.py uses these indices
-        #    both for file lookup and combine filename generation.
+        #    (matching v6 behaviour).  It is DISPLAY-ONLY since the fuse
+        #    request now forwards exact filenames to fuse_ply.py --files.
         all_plys = sorted(proj_dir.glob("*.ply"))
         full_idx = {p.name: i + 1 for i, p in enumerate(all_plys)}
         fuse_result = []
@@ -494,9 +494,13 @@ def build_fuse_page(state: FuseState) -> str:
         bar.style.display = 'flex';
         // Build combine name from time-code labels (matching fuse_ply.py output)
         let names = fuseOrder.map(f => f.name);
+        // LCP on sags-stripped names (mirrors fuse_ply.py: the "-sags"
+        // marker must never leak into the prefix), re-attached to each
+        // label below so every sags input keeps its own marker.
+        let stripped = names.map(n => n.endsWith('-sags.ply') ? n.slice(0, -9) + '.ply' : n);
         // longest common prefix
-        let lcp = names[0];
-        for (let n of names.slice(1)) {{
+        let lcp = stripped[0];
+        for (let n of stripped.slice(1)) {{
           while (!n.startsWith(lcp)) {{
             lcp = lcp.slice(0, -1);
             if (!lcp) break;
@@ -509,9 +513,10 @@ def build_fuse_page(state: FuseState) -> str:
             break;
           }}
         }}
-        let labels = names.map(n => {{
+        let labels = stripped.map((n, i) => {{
           let s = n.slice(lcp.length);
           if (s.endsWith('.ply')) s = s.slice(0, -4);
+          if (names[i].endsWith('-sags.ply')) s += '-sags';
           return s;
         }});
         orderEl.textContent = labels.join(' → ');
@@ -909,16 +914,13 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             state.active_tasks.discard("fuse")
         return
 
-    # Build 1-based index list for fuse_ply.py
-    # fuse_ply.py expects indices relative to ALL *.ply in the proj dir.
-    # We need to map our filtered list back to the full list.
-    all_plys = sorted(proj_dir.glob("*.ply"))
-    name_to_idx = {p.name: i + 1 for i, p in enumerate(all_plys)}  # 1-based
-    one_based = []
-    for pp in ply_paths:
-        idx = name_to_idx.get(pp.name)
-        if idx:
-            one_based.append(idx)
+    # Pass exact FILENAMES to fuse_ply.py (--files).  Numeric indices are
+    # ambiguous: fuse_ply.py numbers files by suffix-sort while a filename
+    # sort puts "X-sags.ply" BEFORE "X.ply" ("-" < "."), so once a SAGS ply
+    # coexists with its original the two orderings disagree and indices
+    # silently resolve to the wrong file (observed: two sags inputs fused
+    # the two plain originals instead).
+    ply_names = [p.name for p in ply_paths]
 
     interp_script = TILLS_PLY_DIR / "interpolate_cameras_circle.py"
     fuse_script = TILLS_PLY_DIR / "fuse_ply.py"
@@ -973,7 +975,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             "--radius-scale", str(f.get("radius_scale", 1.0)),
             "--height-up", str(f.get("height_up", 2)),
             "--height-down", str(f.get("height_down", 0.5)),
-            "--indices", " ".join(str(i) for i in one_based),
+            "--files", " ".join(ply_names),
         ]
         if f.get("bias"):
             fuse_args.append("--bias")
@@ -1198,6 +1200,12 @@ def discover_ply_segments(ply_path: Path) -> list[Path]:
 
     prefix, ts_part = stem.split("-combine-", 1)
     timestamps = ts_part.split("-")
+    # Combine names keep a per-input "-sags" marker (SAGS
+    # actor-segmentation inputs), e.g. ...-combine-A-sags-B-sags.  Drop
+    # EVERY "sags" token so markers are not mistaken for timestamps, and
+    # probe "-sags" variants of intermediate names below.
+    has_sags = "sags" in timestamps
+    timestamps = [t for t in timestamps if t != "sags"]
     if len(timestamps) < 2:
         return [ply_path]
 
@@ -1216,22 +1224,31 @@ def discover_ply_segments(ply_path: Path) -> list[Path]:
     # Generate intermediate names by keeping first N timestamps
     for n in range(1, len(timestamps)):
         inter_stem = f"{prefix}-combine-{'-'.join(timestamps[:n])}"
-        inter_name = f"{inter_stem}.ply"
-        # Search clip/ first, then proj/
+        # Search clip/ first, then proj/; plain name first, then the
+        # "-sags" variant (partial fuses keep per-input sags markers, so
+        # the intermediate ends with "-sags" iff its last input had one).
+        candidates = [d / f"{inter_stem}.ply" for d in (clip_dir, proj_dir_plain)]
+        if has_sags:
+            candidates += [d / f"{inter_stem}-sags.ply"
+                           for d in (clip_dir, proj_dir_plain)]
         found = None
-        for d in (clip_dir, proj_dir_plain):
-            candidate = d / inter_name
+        for candidate in candidates:
             if candidate.exists():
                 found = candidate
                 break
         if not found and n == 1:
             # Fallback for single-timestamp intermediate: raw PLY
             # e.g. 0719-200717.ply when 0719-combine-200717.ply is missing
-            raw_name = f"{prefix}-{timestamps[0]}.ply"
+            raw_bases = [f"{prefix}-{timestamps[0]}.ply"]
+            if has_sags:
+                raw_bases.append(f"{prefix}-{timestamps[0]}-sags.ply")
             for d in (clip_dir, proj_dir_plain):
-                candidate = d / raw_name
-                if candidate.exists():
-                    found = candidate
+                for raw_name in raw_bases:
+                    candidate = d / raw_name
+                    if candidate.exists():
+                        found = candidate
+                        break
+                if found:
                     break
         if found:
             result.append(found)

@@ -136,12 +136,32 @@ def _output_prefix_and_labels(names):
     ``_`` so that HHMMSS time codes are never partially consumed.  The labels
     are the stem parts after the prefix (minus ``.ply``).
 
-    Returns ``(prefix, labels)``.  Example::
+    A per-file ``-sags`` marker (from SAGS actor-segmentation PLYs like
+    ``0805-140403-sags.ply``) is stripped from each name BEFORE the prefix
+    is computed — so the marker can never leak into the prefix and swallow
+    the whole stem (single ``...-sags.ply`` selection) — then re-attached to
+    that file's own label.  The combined name therefore keeps the marker
+    exactly on the files that carry it::
 
-        _output_prefix_and_labels(["0718-153234.ply", "0718-153248.ply"])
-        → ("0718-", ["153234", "153248"])
+        ["0805-140403-sags.ply", "0805-150732-sags.ply"]
+        → prefix "0805-", labels ["140403-sags", "150732-sags"]
+        → output "0805-combine-140403-sags-150732-sags.ply"
+
+    Returns ``(prefix, labels)``.
     """
-    full_prefix = longest_common_prefix(names)
+    # Detect per-file "-sags" markers up front; the LCP is computed on the
+    # stripped names so the marker never leaks into the prefix.
+    stripped = []
+    marked = []
+    for name in names:
+        if name.endswith("-sags.ply"):
+            stripped.append(name[:-len("-sags.ply")] + ".ply")
+            marked.append(True)
+        else:
+            stripped.append(name)
+            marked.append(False)
+
+    full_prefix = longest_common_prefix(stripped)
     # Step back to the last separator so time codes stay intact
     for i in range(len(full_prefix) - 1, -1, -1):
         if full_prefix[i] in "-_":
@@ -149,12 +169,14 @@ def _output_prefix_and_labels(names):
             break
     else:
         prefix = full_prefix
-    # Extract labels: strip prefix + ".ply"
+    # Extract labels: strip prefix + ".ply", restore per-file sags marker
     labels = []
-    for name in names:
+    for name, is_sags in zip(stripped, marked):
         s = name[len(prefix):]
         if s.endswith(".ply"):
             s = s[:-4]
+        if is_sags:
+            s = f"{s}-sags"
         labels.append(s)
     return prefix, labels
 
@@ -549,6 +571,12 @@ def main():
     parser.add_argument("--indices", type=str,
                         default=cfg.get("indices"),
                         help="Space-separated PLY indices to fuse (first = main).  If set, skips interactive prompt.")
+    parser.add_argument("--files", type=str,
+                        default=cfg.get("files"),
+                        help="Space-separated PLY FILENAMES to fuse (first = main).  Takes precedence over "
+                             "--indices and skips interactive prompt.  Preferred over --indices when the caller "
+                             "has exact paths: filename order and suffix-sort order disagree once 'X-sags.ply' "
+                             "coexists with 'X.ply' ('-' sorts before '.').")
     args = parser.parse_args(remaining)
 
     proj_dir = Path(args.path)
@@ -617,7 +645,28 @@ def main():
         print(f"  index {idx}: {suffix}")
 
     # ----- user selection --------------------------------------------------
-    if args.indices is not None:
+    # --files wins over --indices: callers that know exact filenames should
+    # never go through numeric indices (see --files help text).
+    if args.files is not None:
+        if isinstance(args.files, str):
+            wanted = args.files.split()
+        elif isinstance(args.files, list):
+            wanted = [str(x) for x in args.files]
+        else:
+            wanted = [str(args.files)]
+        print(f"\nPLY files (from config/CLI): {wanted}")
+        name_map = {p.name: p for p in ply_files}
+        selection = []
+        for n in wanted:
+            if n not in name_map:
+                print(f"ERROR: file '{n}' not found in {proj_dir}")
+                sys.exit(1)
+            p = name_map[n]
+            s = p.name[len(common_prefix):]
+            if s.endswith(".ply"):
+                s = s[:-4]
+            selection.append((p, s))
+    elif args.indices is not None:
         if isinstance(args.indices, str):
             selected = [int(x) for x in args.indices.split()]
         elif isinstance(args.indices, list):
@@ -630,18 +679,19 @@ def main():
         user_input = input("> ").strip()
         selected = [int(x) for x in user_input.split()]
 
-    if not selected:
-        print("No indices entered, exiting.")
-        sys.exit(0)
+    if args.files is None:
+        if not selected:
+            print("No indices entered, exiting.")
+            sys.exit(0)
 
-    # resolve user indices → (path, label) pairs
-    idx_map = {info[0]: (info[2], info[1]) for info in sorted_info}
-    selection = []
-    for uid in selected:
-        if uid not in idx_map:
-            print(f"ERROR: index {uid} not in list")
-            sys.exit(1)
-        selection.append(idx_map[uid])
+        # resolve user indices → (path, label) pairs
+        idx_map = {info[0]: (info[2], info[1]) for info in sorted_info}
+        selection = []
+        for uid in selected:
+            if uid not in idx_map:
+                print(f"ERROR: index {uid} not in list")
+                sys.exit(1)
+            selection.append(idx_map[uid])
 
     main_path, main_label = selection[0]
     other = selection[1:]
