@@ -334,9 +334,20 @@ def main():
         print(f"ERROR: turnaround frame {i_peak} is out of range for --total {N}")
         sys.exit(1)
 
-    # The sampled peak is what matters: the radial triangle profile degenerates
-    # once the sweep reaches a full revolution, and the residual blend loses
-    # monotonicity right about there too.
+    # The radial triangle profile is bounded by construction — ``_wrap_progress``
+    # never exceeds 1, so the sampled radius always stays within [r_a, r_b] and
+    # there is no state in which the profile "blows up".  The only true ceiling is
+    # a full revolution (359°), where the triangle folds right back onto the
+    # anchor.
+    #
+    # Sweeping past the far anchor (X > 2*pi - span, i.e. past the angularly
+    # opposite side) does fold the profile, but the practical effect is a soft
+    # bulge towards r_b, NOT a radial slide: measured on 0913 (span 180.25°,
+    # r_a 4.3354 / r_b 4.3331) the worst deviation across the whole sweep is
+    # 2.3 mm at ±359°, and 3e-6 m at ±180°.  So this is reported, never clamped —
+    # silently shrinking a user's ±180° to ±179.75° would be worse than the
+    # sub-millimetre effect it guards against.
+    room_deg = math.degrees(2 * math.pi - span)
     max_sweep = 359.0
 
     # Semi-implicit raised cosine — the half-sample offset is what makes the
@@ -352,11 +363,17 @@ def main():
     profile = ("raised-cosine (exact closure, zero velocity at both ends, "
                f"peak at frames {i_peak}/{i_peak + 1})")
 
-    if peak_deg >= max_sweep:
-        print(f"WARNING: sweep {peak_deg:.2f}° >= {max_sweep}° — clamped "
-              f"(use the circle pass for a full orbit)")
+    if peak_deg > max_sweep:
+        print(f"WARNING: sweep ±{peak_deg:.2f}° reaches a full revolution — "
+              f"clamped to ±{max_sweep:.2f}° (the radial profile folds back onto "
+              f"the anchor there; use the circle pass for a full orbit)")
         amp_deg = math.copysign(max_sweep, amp_deg)
         peak_deg = abs(amp_deg)
+    elif peak_deg > room_deg:
+        print(f"NOTE: sweep ±{peak_deg:.2f}° goes {peak_deg - room_deg:.2f}° past "
+              f"the angularly opposite side (anchor gap {math.degrees(best_dist):.1f}°"
+              f" → room {room_deg:.2f}°). The radius profile folds slightly there; "
+              f"harmless when the two anchor radii are close.")
 
     angles = ang_a + dir_sign * np.radians(amp_deg) * v
 

@@ -691,6 +691,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-c-ring_height_down', p.clip?.ring_height_down);
       pmSet('pm-i-total', p.interpolate?.total);
       pmSet('pm-i-anchor_camera', p.interpolate?.anchor_camera, false, true);
+      pmSet('pm-i-swing_anchor_camera', p.interpolate?.swing_anchor_camera, false, true);
       pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
       pmSet('pm-i-height_offset', p.interpolate?.height_offset);
       pmSet('pm-i-pitch_offset', p.interpolate?.pitch_offset);
@@ -739,6 +740,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.clip.ring_height_down=pF('pm-c-ring_height_down');
       params.interpolate.total=pI('pm-i-total');
       params.interpolate.anchor_camera=document.getElementById('pm-i-anchor_camera').value;
+      params.interpolate.swing_anchor_camera=document.getElementById('pm-i-swing_anchor_camera').value.trim();
       params.interpolate.radius_scale=pF('pm-i-radius_scale');
       params.interpolate.height_offset=pF('pm-i-height_offset');
       params.interpolate.pitch_offset=pF('pm-i-pitch_offset');
@@ -919,7 +921,8 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="swing">swing（只生成左右摆动）</option>
             </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
           <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
-          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号（circle 与 swing 的起始机位）</span></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
+          <div class="fd"><label>swing_anchor_camera</label><input type="text" id="pm-i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">[swing] 摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
           <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
           <div class="fd"><label>pitch_offset (deg)</label><input type="text" id="pm-i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
@@ -1008,28 +1011,36 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         mode = _interp_mode(ip)
 
         # Shared args are identical for both passes: the swing MUST use the same
-        # circle fit, anchor and intrinsics as the orbit, otherwise the two
-        # trajectories would disagree about the scene.
+        # circle fit, anchor radius/height/intrinsics range as the orbit,
+        # otherwise the two trajectories would disagree about the scene.  The
+        # ANCHOR is deliberately NOT shared — see per-job args below.
         common = [
             "--path", proj_path,
             "--max-index", str(max_index),
             "--total", str(ip.get("total", 300)),
-            "--anchor-camera", str(ip.get("anchor_camera", "006")),
             "--radius-scale", str(ip.get("radius_scale", 1.0)),
             "--height-offset", str(ip.get("height_offset", 0.0)),
             "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
             "--fov-x", str(ip.get("fov_x", 80.0)),
         ]
 
+        # Two trajectories, two independently configurable start cameras.
+        # ``swing_anchor_camera`` empty/missing falls back to ``anchor_camera``,
+        # so every existing preset keeps behaving as if they were one field.
+        circle_anchor = str(ip.get("anchor_camera") or "006")
+        swing_anchor = str(ip.get("swing_anchor_camera") or "").strip() or circle_anchor
+
         jobs = []  # (label, script, extra args, output name)
         if mode in ("circle", "both"):
             jobs.append((
                 "circle", interp_script,
-                ["--direction", str(ip.get("direction", "auto"))],
+                ["--anchor-camera", circle_anchor,
+                 "--direction", str(ip.get("direction", "auto"))],
                 "cameras_align.json",
             ))
         if mode in ("swing", "both"):
-            swing_extra = ["--dir", str(ip.get("swing_dir", "auto"))]
+            swing_extra = ["--anchor-camera", swing_anchor,
+                           "--dir", str(ip.get("swing_dir", "auto"))]
             if ip.get("swing_deg") is not None:
                 swing_extra += ["--swing-deg", str(ip["swing_deg"])]
             if ip.get("turn_frame") is not None:
@@ -1037,6 +1048,9 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             if ip.get("residual_blend"):
                 swing_extra += ["--residual-blend", str(ip["residual_blend"])]
             jobs.append(("swing", swing_script, swing_extra, "cameras_spin.json"))
+
+        if swing_anchor != circle_anchor:
+            _log(f"anchor cameras : circle={circle_anchor}  swing={swing_anchor}")
 
         for label, script, extra, out_name in jobs:
             if not script.exists():
@@ -1627,7 +1641,9 @@ def _build_presets_page() -> str:
       <div class="field"><label>total</label>
         <input type="text" id="i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
       <div class="field"><label>anchor_camera</label>
-        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号（circle 与 swing 的起始机位）</span></div>
+        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
+      <div class="field"><label>swing_anchor_camera</label>
+        <input type="text" id="i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">[swing] 摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
       <div class="field"><label>radius_scale</label>
         <input type="text" id="i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
       <div class="field"><label>height_offset (m)</label>
@@ -1709,6 +1725,7 @@ def _build_presets_page() -> str:
       setVal('c-ring_height_down', p.clip?.ring_height_down);
       setVal('i-total', p.interpolate?.total);
       setVal('i-anchor_camera', p.interpolate?.anchor_camera, false, true);
+      setVal('i-swing_anchor_camera', p.interpolate?.swing_anchor_camera, false, true);
       setVal('i-radius_scale', p.interpolate?.radius_scale);
       setVal('i-height_offset', p.interpolate?.height_offset);
       setVal('i-pitch_offset', p.interpolate?.pitch_offset);
@@ -1824,6 +1841,7 @@ def _build_presets_page() -> str:
       params.clip.ring_height_down = floatVal('c-ring_height_down');
       params.interpolate.total = intVal('i-total');
       params.interpolate.anchor_camera = document.getElementById('i-anchor_camera').value;
+      params.interpolate.swing_anchor_camera = document.getElementById('i-swing_anchor_camera').value.trim();
       params.interpolate.radius_scale = floatVal('i-radius_scale');
       params.interpolate.height_offset = floatVal('i-height_offset');
       params.interpolate.pitch_offset = floatVal('i-pitch_offset');

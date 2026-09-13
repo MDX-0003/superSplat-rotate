@@ -120,6 +120,18 @@ CameraData/<project>/
 - 历史 bug（2026-09-13 修复）：`interpolate_cameras_circle.py` 曾用 `anchor_idx = d["id"]`。当 id 是 1-based 时**静默错位一台相机**（日志看起来完全正常，但 index 0 是 007 而不是 006）；id 稀疏时直接 `IndexError`。当前 LiteGS 产出的 `cameras.json` 恰好 `id == 数组下标`（21 个项目实测全部成立），所以修复前后输出**逐字节相同**。
 - 新脚本 `interpolate_cameras_swing.py` 从一开始就用 `enumerate`。日志同时打印 `array_index=` 和 `(file id=)` 便于对账。
 
+### 两条轨迹的起点锚点（`interpolate` preset 字段）
+- `anchor_camera` = **circle**（转一圈）的起始机位；`swing_anchor_camera` = **swing**（摆动）的起始机位。
+- **`swing_anchor_camera` 留空 / 缺失 / 纯空白 → 回落到 `anchor_camera`**，因此老 preset 与"只填一个"的用法行为不变。服务器侧的回落写在 `fuse_server.py` 的 `run_fuse_clip`：
+  ```python
+  circle_anchor = str(ip.get("anchor_camera") or "006")
+  swing_anchor  = str(ip.get("swing_anchor_camera") or "").strip() or circle_anchor
+  ```
+  注意 `or` 是必需的——空字符串也要回落，否则会传 `--anchor-camera ""`。
+- `--anchor-camera` **不在公共参数列表里**：两个 job 各自拼自己的锚点，脚本 CLI 保持完全对称（两个脚本都只认 `--anchor-camera`）。
+- 两者不同时，swing 的起始位置/旋转残差/半径曲线 `r_a`/**内参 fx,fy,width,height**（`--lock-intrinsics` 默认开）全部跟随 swing 锚点 → 同一个 PLY 的两条视频视角会不同，混剪需注意。
+- 摆幅上限只有 **359°**（整圈退化）。峰值越过"角向对面"（`X > 2π − span`）时 `_wrap_progress` 会折返，但半径始终被限制在 `[r_a, r_b]` 内、效果仅毫米级（0913 实测 ±359° 时最大偏差 2.3mm / 4.33m），所以**只提示不 clamp**——不要为了这点效应去改用户填的 ±180°。
+
 ### v8 Daemon（`tills/server/`）
 - `_server.py`：共享的 SSE/HTTP 微框架，两个 daemon 共同 import。**修改 `_server.py` 前确认 train + fuse 两个进程的行为都不会被影响。**
 - `Cache-Control: no-cache` 已全局开启。由于页面是服务端渲染（f-string 拼 HTML），不加此 header 浏览器会缓存旧版本 HTML/JS，revert 代码后页面仍用缓存 → 看起来"没修好"。
