@@ -134,12 +134,12 @@ class FuseState:
                     "mtime": mtime, "path": str(p),
                 })
 
-        # ── JSON files: project dir cameras.json + cameras_align.json ──
+        # ── JSON files: project dir cameras*.json ──
+        #    Covered by glob so a new trajectory pass (e.g. cameras_spin.json
+        #    from interpolate_cameras_swing.py) shows up without another edit.
         json_result = []
-        for jname in ("cameras.json", "cameras_align.json"):
-            jp = proj_dir / jname
-            if jp.exists():
-                json_result.append({"name": jname, "path": str(jp), "source": "proj"})
+        for jp in sorted(proj_dir.glob("cameras*.json")):
+            json_result.append({"name": jp.name, "path": str(jp), "source": "proj"})
 
         # ── JSON files: jsons_path/*.json ──
         if self.jsons_dir and self.jsons_dir.is_dir():
@@ -682,9 +682,14 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-pitch_offset', p.interpolate?.pitch_offset);
       pmSet('pm-i-fov_x', p.interpolate?.fov_x);
       pmSet('pm-i-direction', p.interpolate?.direction, false, true);
+      pmSet('pm-i-mode', p.interpolate?.mode, false, true);
+      pmSet('pm-i-swing_deg', p.interpolate?.swing_deg);
+      pmSet('pm-i-swing_dir', p.interpolate?.swing_dir, false, true);
+      pmSet('pm-i-turn_frame', p.interpolate?.turn_frame, false, true);
+      pmSet('pm-i-residual_blend', p.interpolate?.residual_blend, false, true);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
-      pmToggleDenoise(); pmToggleRing();
+      pmToggleDenoise(); pmToggleRing(); pmToggleSwing();
     }}
     function pmSet(id, val, isCb, isTxt) {{
       let el = document.getElementById(id);
@@ -725,6 +730,12 @@ def build_fuse_page(state: FuseState) -> str:
       params.interpolate.pitch_offset=pF('pm-i-pitch_offset');
       params.interpolate.fov_x=pF('pm-i-fov_x');
       params.interpolate.direction=document.getElementById('pm-i-direction').value;
+      params.interpolate.mode=document.getElementById('pm-i-mode').value;
+      params.interpolate.swing_deg=pF('pm-i-swing_deg');
+      params.interpolate.swing_dir=document.getElementById('pm-i-swing_dir').value;
+      let tf = pI('pm-i-turn_frame');
+      params.interpolate.residual_blend=document.getElementById('pm-i-residual_blend').value;
+      if (tf !== null) params.interpolate.turn_frame = tf;
       let r=await fetch('/presets/save',{{method:'POST',
        headers:{{'Content-Type':'application/json'}},
        body:JSON.stringify({{name:pmName,params:params}})}});
@@ -785,6 +796,23 @@ def build_fuse_page(state: FuseState) -> str:
       let isRegion = document.getElementById('pm-c-denoise_method').value === 'region-grow';
       let rsEl = document.getElementById('pm-c-radius_scale');
       if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
+    }}
+    function pmToggleSwing() {{
+      // swing-only fields appear when mode is swing/both; direction is
+      // circle-only. Enabled state and visibility move together so a hidden
+      // field can never be saved with a stale value.
+      let m = document.getElementById('pm-i-mode').value;
+      let swingOn = (m === 'swing' || m === 'both');
+      let circleOn = (m === 'circle' || m === 'both');
+      ['pm-i-swing_deg','pm-i-swing_dir','pm-i-turn_frame','pm-i-residual_blend'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
+      }});
+      let dEl = document.getElementById('pm-i-direction');
+      if (dEl) {{
+        dEl.disabled = !circleOn;
+        dEl.parentElement.style.display = circleOn ? '' : 'none';
+      }}
     }}
     // ── restore persisted selections on page load ──
     (function() {{
@@ -870,8 +898,14 @@ def build_fuse_page(state: FuseState) -> str:
           <div class="fd"><label>ring_height_down (m)</label><input type="text" id="pm-c-ring_height_down" step="0.1" size="4"><span class="tip">环形删除下高度</span></div>
         </div>
         <div class="ms"><h3>interpolate 参数</h3>
+          <div class="fd"><label>mode</label>
+            <select id="pm-i-mode" onchange="pmToggleSwing()" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="circle">circle（只生成转一圈）</option>
+              <option value="swing">swing（只生成左右摆动）</option>
+              <option value="both">both（两条轨迹都生成）</option>
+            </select><span class="tip">轨迹类型。circle → cameras_align.json（转一圈）；swing → cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
           <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
-          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号（circle 与 swing 的起始机位）</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
           <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
           <div class="fd"><label>pitch_offset (deg)</label><input type="text" id="pm-i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
@@ -881,7 +915,21 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="auto">auto（跟随拍摄方向）</option>
               <option value="same">same（与拍摄一致）</option>
               <option value="opposite">opposite（与拍摄相反）</option>
-            </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+            </select><span class="tip">[circle] 插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+          <div class="fd"><label>swing_deg (deg)</label><input type="text" id="pm-i-swing_deg" step="1" size="5"><span class="tip">[swing] 摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
+          <div class="fd"><label>swing_dir</label>
+            <select id="pm-i-swing_dir" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="auto">auto（跟随拍摄方向）</option>
+              <option value="right">right（+角度方向）</option>
+              <option value="left">left（−角度方向）</option>
+            </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
+          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。留空=正中间（闭合所需，居中否则会被强制拉回）</span></div>
+          <div class="fd"><label>residual_blend</label>
+            <select id="pm-i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="auto">auto（三角混合,锚点精确）</option>
+              <option value="full">full（去程→远锚点残差）</option>
+              <option value="none">none（纯 look-at 无 SfM 修正）</option>
+            </select><span class="tip">[swing] 两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
         </div>
       </div>
     </div>
@@ -901,7 +949,9 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         ply_indices: 0-based indices into ``state.fuse_plys``.
     """
     proj_dir = ROOT / f"CameraData/{cfg['project']}"
-    proj_path = f"CameraData/{cfg['project']}"
+    # Absolute: every child script is spawned from the server's cwd, which is not
+    # necessarily the repo root, and a relative --path would then not resolve.
+    proj_path = str(proj_dir)
 
     # Resolve indices to actual PLY paths (1-based for fuse_ply.py)
     with state._lock:
@@ -923,6 +973,7 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
     ply_names = [p.name for p in ply_paths]
 
     interp_script = TILLS_PLY_DIR / "interpolate_cameras_circle.py"
+    swing_script = TILLS_PLY_DIR / "interpolate_cameras_swing.py"
     fuse_script = TILLS_PLY_DIR / "fuse_ply.py"
     clip_script = TILLS_PLY_DIR / "clip_ply.py"
     max_index = preset.get("max_index", 89)
@@ -935,10 +986,19 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
 
     new_combine = None  # set after successful fuse, used in finally for auto-select
     try:
-        # Step 0: Interpolate (generate cameras_align.json)
+        # Step 0: Interpolate trajectories (generate cameras_align.json and/or
+        # cameras_spin.json).  ``mode`` defaults to "circle" so every existing
+        # preset behaves exactly as before this feature was added.
         ip = preset.get("interpolate", {})
-        interp_args = [
-            sys.executable, str(interp_script),
+        mode = str(ip.get("mode", "circle"))
+        if mode not in ("circle", "swing", "both"):
+            _log(f"WARNING: unknown interpolate.mode '{mode}', falling back to 'circle'")
+            mode = "circle"
+
+        # Shared args are identical for both passes: the swing MUST use the same
+        # circle fit, anchor and intrinsics as the orbit, otherwise the two
+        # trajectories would disagree about the scene.
+        common = [
             "--path", proj_path,
             "--max-index", str(max_index),
             "--total", str(ip.get("total", 300)),
@@ -947,24 +1007,48 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
             "--height-offset", str(ip.get("height_offset", 0.0)),
             "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
             "--fov-x", str(ip.get("fov_x", 80.0)),
-            "--direction", str(ip.get("direction", "auto")),
         ]
-        _log(f"interpolate: {' '.join(str(a) for a in interp_args)}")
-        result = subprocess.run(
-            interp_args, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=3600,
-        )
-        for line in result.stdout.split("\n"):
-            if line.strip():
-                _log(line)
-        if result.returncode != 0:
-            _log(f"INTERPOLATE FAILED (exit {result.returncode})")
-            if result.stderr:
-                for line in result.stderr.split("\n"):
-                    if line.strip():
-                        _log(f"[stderr] {line}")
-            return
-        _log("interpolate 完成")
+
+        jobs = []  # (label, script, extra args, output name)
+        if mode in ("circle", "both"):
+            jobs.append((
+                "circle", interp_script,
+                ["--direction", str(ip.get("direction", "auto"))],
+                "cameras_align.json",
+            ))
+        if mode in ("swing", "both"):
+            swing_extra = ["--dir", str(ip.get("swing_dir", "auto"))]
+            if ip.get("swing_deg") is not None:
+                swing_extra += ["--swing-deg", str(ip["swing_deg"])]
+            if ip.get("turn_frame") is not None:
+                swing_extra += ["--turn-frame", str(ip["turn_frame"])]
+            if ip.get("residual_blend"):
+                swing_extra += ["--residual-blend", str(ip["residual_blend"])]
+            jobs.append(("swing", swing_script, swing_extra, "cameras_spin.json"))
+
+        for label, script, extra, out_name in jobs:
+            if not script.exists():
+                _log(f"INTERPOLATE FAILED ({label}): script not found: {script}")
+                return
+            interp_args = [sys.executable, str(script)] + common + extra + \
+                ["--output", str(proj_dir / out_name)]
+            _log(f"interpolate[{label}]: {' '.join(str(a) for a in interp_args)}")
+            result = subprocess.run(
+                interp_args, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=3600,
+            )
+            for line in result.stdout.split("\n"):
+                if line.strip():
+                    _log(line)
+            if result.returncode != 0:
+                _log(f"INTERPOLATE FAILED ({label}, exit {result.returncode})")
+                if result.stderr:
+                    for line in result.stderr.split("\n"):
+                        if line.strip():
+                            _log(f"[stderr] {line}")
+                return
+        _log(f"interpolate 完成 ({mode}: "
+             f"{', '.join(j[0] for j in jobs)})")
 
         # Step 1: Fuse
         before_combine = set(p.name for p in proj_dir.glob("*combine*.ply"))
@@ -1138,13 +1222,10 @@ def run_render(state: FuseState, cfg: dict,
                 else proj_dir / "renders"
             )
             renders_dir.mkdir(parents=True, exist_ok=True)
-            # Build video filename from PLY suffix: "03-221842-221919.mp4"
-            ply_stem = ply_path.stem
-            if "-combine-" in ply_stem:
-                suffix = ply_stem.split("-combine-", 1)[1]
-            else:
-                suffix = ply_stem.split("-", 1)[1] if "-" in ply_stem else ""
-            expected_filename = f"{proj_name}-{suffix}.mp4" if suffix else f"{proj_name}.mp4"
+            # Build video filename from the PLY suffix plus a tag for which
+            # camera trajectory was rendered, so the orbit and the swing pass
+            # over the same PLY no longer collide and get "-1" suffixed.
+            expected_filename = build_video_name(proj_name, ply_path, json_path)
             success = await render_video(page, total_frames, renders_dir,
                                          expected_filename, fps)
             if success:
@@ -1179,6 +1260,37 @@ def run_render(state: FuseState, cfg: dict,
 
 
 # ── Multi-PLY segmented render ─────────────────────────────────────────────────
+
+def trajectory_tag(json_path: Path) -> str:
+    """Short tag for the camera trajectory a render used.
+
+    Renders of the same PLY with different camera JSONs (the orbit and the swing)
+    would otherwise produce the same output filename and get "-1" suffixed by
+    ``unique_path``, making the results impossible to tell apart afterwards.
+    """
+    name = Path(json_path).stem
+    if name == "cameras_align":
+        return "circle"
+    if name == "cameras_spin":
+        return "swing"
+    return Path(json_path).stem
+
+
+def build_video_name(proj_name: str, ply_path: Path, json_path: Path) -> str:
+    """``<proj>-<ply suffix>-<trajectory>.mp4`` (falls back to plain names)."""
+    ply_stem = Path(ply_path).stem
+    if "-combine-" in ply_stem:
+        # "<proj>-combine-<ts>" -> "<ts>"; this is the historical naming
+        suffix = ply_stem.split("-combine-", 1)[1]
+        base = f"{proj_name}-{suffix}" if suffix else proj_name
+    elif "-" in ply_stem and ply_stem.split("-", 1)[0] == proj_name:
+        suffix = ply_stem.split("-", 1)[1]
+        base = f"{proj_name}-{suffix}"
+    else:
+        # Non-standard PLY name — keep it rather than dropping information.
+        base = ply_stem
+    return f"{base}-{trajectory_tag(json_path)}.mp4"
+
 
 def discover_ply_segments(ply_path: Path) -> list[Path]:
     """Auto-discover intermediate PLYs from a combine PLY filename.
@@ -1336,13 +1448,8 @@ def run_render_multi(state: FuseState, cfg: dict,
             )
             renders_dir.mkdir(parents=True, exist_ok=True)
 
-            # Build video filename from PLY suffix
-            ply_stem = ply_path.stem
-            if "-combine-" in ply_stem:
-                suffix = ply_stem.split("-combine-", 1)[1]
-            else:
-                suffix = ply_stem.split("-", 1)[1] if "-" in ply_stem else ""
-            expected_filename = f"{proj_name}-{suffix}.mp4" if suffix else f"{proj_name}.mp4"
+            # Build video filename (PLY suffix + trajectory tag)
+            expected_filename = build_video_name(proj_name, ply_path, json_path)
 
             success = await render_video(
                 page, total_frames, renders_dir, expected_filename, fps,
@@ -1499,10 +1606,16 @@ def _build_presets_page() -> str:
     </div>
     <div class="section">
       <h2>interpolate 参数</h2>
+      <div class="field"><label>mode</label>
+        <select id="i-mode" onchange="toggleSwing()" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="circle">circle（只生成转一圈）</option>
+          <option value="swing">swing（只生成左右摆动）</option>
+          <option value="both">both（两条轨迹都生成）</option>
+        </select><span class="tip">轨迹类型。circle → cameras_align.json（转一圈）；swing → cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
       <div class="field"><label>total</label>
         <input type="text" id="i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
       <div class="field"><label>anchor_camera</label>
-        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号</span></div>
+        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号（circle 与 swing 的起始机位）</span></div>
       <div class="field"><label>radius_scale</label>
         <input type="text" id="i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
       <div class="field"><label>height_offset (m)</label>
@@ -1516,7 +1629,23 @@ def _build_presets_page() -> str:
           <option value="auto">auto（跟随拍摄方向）</option>
           <option value="same">same（与拍摄一致）</option>
           <option value="opposite">opposite（与拍摄相反）</option>
-        </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+        </select><span class="tip">[circle] 插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+      <div class="field"><label>swing_deg (deg)</label>
+        <input type="text" id="i-swing_deg" step="1" size="5"><span class="tip">[swing] 摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
+      <div class="field"><label>swing_dir</label>
+        <select id="i-swing_dir" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="auto">auto（跟随拍摄方向）</option>
+          <option value="right">right（+角度方向）</option>
+          <option value="left">left（−角度方向）</option>
+        </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
+      <div class="field"><label>turn_frame</label>
+        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。留空=正中间（闭合所需，居中否则会被强制拉回）</span></div>
+      <div class="field"><label>residual_blend</label>
+        <select id="i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="auto">auto（三角混合,锚点精确）</option>
+          <option value="full">full（去程→远锚点残差）</option>
+          <option value="none">none（纯 look-at 无 SfM 修正）</option>
+        </select><span class="tip">[swing] 两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
@@ -1573,7 +1702,14 @@ def _build_presets_page() -> str:
       setVal('i-pitch_offset', p.interpolate?.pitch_offset);
       setVal('i-fov_x', p.interpolate?.fov_x);
       setVal('i-direction', p.interpolate?.direction, false, true);
-      toggleBias(); toggleDenoise(); toggleRing();
+      setVal('i-mode', p.interpolate?.mode, false, true);
+      // swing_deg has a real default in the interpolator (30) — show it rather
+      // than an empty box, so saving never writes null into the preset.
+      setVal('i-swing_deg', p.interpolate?.swing_deg ?? 30);
+      setVal('i-swing_dir', p.interpolate?.swing_dir, false, true);
+      setVal('i-turn_frame', p.interpolate?.turn_frame, false, true);
+      setVal('i-residual_blend', p.interpolate?.residual_blend, false, true);
+      toggleBias(); toggleDenoise(); toggleRing(); toggleSwing();
     }}
 
     function setVal(id, val, isCheckbox, isText) {{
@@ -1624,6 +1760,23 @@ def _build_presets_page() -> str:
       let rsEl = document.getElementById('c-radius_scale');
       if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
     }}
+    function toggleSwing() {{
+      // swing-only fields appear when mode is swing/both; direction is
+      // circle-only. Visibility and enabled state move together so a hidden
+      // field can never be saved with a stale value.
+      let m = document.getElementById('i-mode').value;
+      let swingOn = (m === 'swing' || m === 'both');
+      let circleOn = (m === 'circle' || m === 'both');
+      ['i-swing_deg','i-swing_dir','i-turn_frame','i-residual_blend'].forEach(id => {{
+        let el = document.getElementById(id); if (!el) return;
+        el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
+      }});
+      let dEl = document.getElementById('i-direction');
+      if (dEl) {{
+        dEl.disabled = !circleOn;
+        dEl.parentElement.style.display = circleOn ? '' : 'none';
+      }}
+    }}
 
     function floatVal(id) {{
       let v = parseFloat(document.getElementById(id).value);
@@ -1664,6 +1817,12 @@ def _build_presets_page() -> str:
       params.interpolate.pitch_offset = floatVal('i-pitch_offset');
       params.interpolate.fov_x = floatVal('i-fov_x');
       params.interpolate.direction = document.getElementById('i-direction').value;
+      params.interpolate.mode = document.getElementById('i-mode').value;
+      params.interpolate.swing_deg = floatVal('i-swing_deg');
+      params.interpolate.swing_dir = document.getElementById('i-swing_dir').value;
+      let tf2 = intVal('i-turn_frame');
+      params.interpolate.residual_blend = document.getElementById('i-residual_blend').value;
+      if (tf2 !== null) params.interpolate.turn_frame = tf2;
       return params;
     }}
 
@@ -1833,14 +1992,20 @@ def _make_fuse_routes(state: FuseState, cfg: dict,
             return json.dumps({"status": "error",
                                "message": f"preset not found: {name}"}), \
                    "application/json; charset=utf-8"
-        # Merge only known sections
+        # Merge only known sections. Null/empty form fields must NOT overwrite
+        # stored values — an unanswered box means "unchanged", not "unset"
+        # (otherwise clearing e.g. swing_deg would write null into presets.json
+        # and silently fall back to the script default).
         p = presets[name]
         if "max_index" in params:
-            p["max_index"] = params["max_index"]
+            if params["max_index"] is not None:
+                p["max_index"] = params["max_index"]
         for section in ("fuse", "clip", "interpolate"):
             if section in params and isinstance(params[section], dict):
                 p.setdefault(section, {})
-                p[section].update(params[section])
+                for k, v in params[section].items():
+                    if v is not None:
+                        p[section][k] = v
         _save_all_presets(presets)
         logger.write("presets", f"saved preset '{name}'")
         return json.dumps({"status": "ok", "message": f"preset '{name}' saved"}), \
