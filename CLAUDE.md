@@ -49,7 +49,8 @@ PlayCanvas 3DGS 编辑器，开源。我们在此之上添加了**批量导出 G
 | `ply_pipeline.py` | Preset 驱动的全流程工具：interpolate → fuse → clip |
 | `fuse_ply.py` | 多 PLY 融合（圆拟合 + 圆柱体过滤 + bias 修正）。单 PLY 自动跳过 |
 | `clip_ply.py` | PLY 裁剪/去噪/环形删除。支持 `--files` 选择性处理 + 同名跳过 |
-| `interpolate_cameras_circle.py` | 圆形环绕相机位姿插值 |
+| `interpolate_cameras_circle.py` | 圆形环绕相机位姿插值 → `cameras_align.json`（转一圈） |
+| `interpolate_cameras_swing.py` | 圆弧摆动相机位姿插值 → `cameras_spin.json`（从锚点相机摆 ±X 度后回到起点，首尾姿态逐比特相同，可无缝循环） |
 | `ply_utils.py` | PLY 二进制读写 + 圆拟合 |
 | `presets.json` | 命名参数预设：path / max_index / interpolate / fuse / clip |
 
@@ -105,6 +106,19 @@ CameraData/<project>/
 - 所有路径通过 `cfg["project"]` 推导（不是 preset 的 path）
 - 中间产物存在则跳过，`--force` 强制覆盖
 - 断开重跑不加 `--steps` 即可从断开处继续（全幂等）
+
+### 相机索引约定（`tills_ply/interpolate_cameras_*.py`）⚠️
+- **`cameras.json` 的 `id` 字段只能当编号显示，绝不能当下标用。** 数组下标（位置）才是唯一可靠的索引：拟合圆的 `positions`、`all_angles`、锚点 B 的 `best_j`、`data[:max_index+1]` 切片全部按位置算。
+- 取锚点必须用 `enumerate` 拿位置，**不要**写 `anchor_idx = d["id"]`：
+  ```python
+  for i, d in enumerate(data):
+      if d["img_name"] == anchor_img:
+          anchor_idx = i                  # 位置，用于 all_angles[anchor_idx] / data[anchor_idx]
+          anchor_file_id = d.get("id")    # 仅用于日志
+          break
+  ```
+- 历史 bug（2026-09-13 修复）：`interpolate_cameras_circle.py` 曾用 `anchor_idx = d["id"]`。当 id 是 1-based 时**静默错位一台相机**（日志看起来完全正常，但 index 0 是 007 而不是 006）；id 稀疏时直接 `IndexError`。当前 LiteGS 产出的 `cameras.json` 恰好 `id == 数组下标`（21 个项目实测全部成立），所以修复前后输出**逐字节相同**。
+- 新脚本 `interpolate_cameras_swing.py` 从一开始就用 `enumerate`。日志同时打印 `array_index=` 和 `(file id=)` 便于对账。
 
 ### v8 Daemon（`tills/server/`）
 - `_server.py`：共享的 SSE/HTTP 微框架，两个 daemon 共同 import。**修改 `_server.py` 前确认 train + fuse 两个进程的行为都不会被影响。**

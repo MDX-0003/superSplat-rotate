@@ -131,17 +131,25 @@ def main():
     data = data[:args.max_index + 1]
     print(f"Loaded {total_loaded} poses, keeping 0..{args.max_index} ({len(data)})")
 
-    # find the anchor camera by img_name
+    # find the anchor camera by img_name.
+    # NOTE: index into ``data`` by ARRAY POSITION, never by the file's ``id``
+    # field.  ``all_angles`` / ``anchor_b`` / the circle fit are all positional,
+    # so using ``d["id"]`` as an index silently selects the wrong camera as soon
+    # as ids are 1-based or non-contiguous (and raises IndexError when they are
+    # sparse).  LiteGS happens to emit id == array index today, which is why the
+    # two meanings were conflated here.
     anchor_img = args.anchor_camera
     anchor_idx = None
-    for d in data:
+    for i, d in enumerate(data):
         if d["img_name"] == anchor_img:
-            anchor_idx = d["id"]
+            anchor_idx = i
+            anchor_file_id = d.get("id")
             break
     if anchor_idx is None:
         print(f"ERROR: camera with img_name='{anchor_img}' not found in input")
         return
-    print(f"Anchor camera  : img_name={anchor_img}  id={anchor_idx}")
+    print(f"Anchor camera  : img_name={anchor_img}  array_index={anchor_idx}  "
+          f"(file id={anchor_file_id})")
 
     # ----- extract -------------------------------------------------------
     positions = np.array([d["position"] for d in data])
@@ -212,8 +220,8 @@ def main():
     p_b = np.array(anchor_b["position"])
     r_a = float(np.linalg.norm(p_a - center))
     r_b = float(np.linalg.norm(p_b - center))
-    print(f"Anchor A       : img_name={anchor_img}  id={anchor_idx}  r={r_a:.4f}  angle={ang_a:.4f}")
-    print(f"Anchor B (auto): id={best_j}  r={r_b:.4f}  angle={all_angles[best_j]:.4f}  "
+    print(f"Anchor A       : img_name={anchor_img}  array_index={anchor_idx}  r={r_a:.4f}  angle={ang_a:.4f}")
+    print(f"Anchor B (auto): array_index={best_j}  r={r_b:.4f}  angle={all_angles[best_j]:.4f}  "
           f"gap={np.degrees(best_dist):.1f}°")
 
     ang_b = all_angles[best_j]

@@ -517,12 +517,18 @@ const registerCameraPosesEvents = (events: Events) => {
     // Used by JSON/camera-traj import so we rebuild the spline and fire
     // 'track.keysLoaded' a single time instead of N 'track.keyAdded'.
     events.on('camera.setPoses', (poses: Pose[]) => {
+        // NOTE: the parentheses around `??` are load-bearing. Without them the
+        // expression reads as `(p.fov ?? has('camera.fov')) ? invoke(...) : 60`,
+        // so a pose that already carries an explicit fov would have it thrown
+        // away and replaced by the current editor camera fov. JSON imports hide
+        // this because file-handler.ts fills fov for every pose.
+        const fallbackFov = events.functions.has('camera.fov') ? events.invoke('camera.fov') : 60;
         track.loadPoses(poses.map(p => ({
             name: p.name,
             frame: p.frame,
             position: p.position.clone(),
             target: p.target.clone(),
-            fov: p.fov ?? events.functions.has('camera.fov') ? events.invoke('camera.fov') : 60,
+            fov: p.fov ?? fallbackFov,
             rotation: p.rotation?.clone(),
             intrinsics: p.intrinsics ? { ...p.intrinsics } : undefined
         })));
