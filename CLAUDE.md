@@ -46,7 +46,7 @@ PlayCanvas 3DGS 编辑器，开源。我们在此之上添加了**批量导出 G
 
 | 脚本 | 功能 |
 |------|------|
-| `ply_pipeline.py` | Preset 驱动的全流程工具：interpolate → fuse → clip |
+| `ply_pipeline.py` | Preset 驱动的全流程工具：interpolate → fuse → clip。⚠️ **只支持 circle 轨迹，见下方"已知缺口"** |
 | `fuse_ply.py` | 多 PLY 融合（圆拟合 + 圆柱体过滤 + bias 修正）。单 PLY 自动跳过 |
 | `clip_ply.py` | PLY 裁剪/去噪/环形删除。支持 `--files` 选择性处理 + 同名跳过 |
 | `interpolate_cameras_circle.py` | 圆形环绕相机位姿插值 → `cameras_align.json`（转一圈） |
@@ -138,6 +138,18 @@ CameraData/<project>/
 - 锚点或帧数不同时，swing 的起始位置/旋转残差/半径曲线 `r_a`/**内参 fx,fy,width,height**（`--lock-intrinsics` 默认开）全部跟随 swing 锚点 → 同一个 PLY 的两条视频视角会不同，混剪需注意。
 - 摆幅上限只有 **359°**（整圈退化）。峰值越过"角向对面"（`X > 2π − span`）时 `_wrap_progress` 会折返，但半径始终被限制在 `[r_a, r_b]` 内、效果仅毫米级（0913 实测 ±180° 时 3e-6 m、±359° 时 2.3mm / 4.33m），所以**既不 clamp 也不提示**——去掉提示是因为 0913 的常规配置天生就越界 0.25°，每次都刷警告会让日志失去意义；**也不要为了这点效应去改用户填的 ±180°**。
 
+### 已知缺口：`ply_pipeline.py` 未跟进 swing 轨迹（**有意暂缓，勿当成 bug**）
+
+2026-09-13 明确决定**暂不实现**，因为 `fuse_server.py` 已能覆盖出片流程，命令行全流程没有实际需求。
+但下面这些坑要知道，否则将来用命令行跑一遍就会中招：
+
+- `ply_pipeline.py:build_interpolate_args()` **硬编码只调 `interpolate_cameras_circle.py`**，且只拼 circle 侧的参数字段。它**永远不会**产出 `cameras_spin.json`。
+- 它**完全忽略**这些 preset 字段（写了也不报错，静默无效）：`mode` / `swing_deg` / `swing_dir` / `residual_blend` / `swing_anchor_camera` / `swing_total`。
+- 它仍然读 `total` / `anchor_camera`（circle 语义），所以只调 circle 参数时命令行行为与 fuse_server **一致**；一旦 preset 里同时有 swing 字段，两边行为就会**分叉**。
+- ⚠️ **最危险的坑**：`ply_pipeline.py` 的 interpolate 步骤固定写 `cameras_align.json`（`run_pipeline()` 里 `output_json = proj / "cameras_align.json"`）。所以只跑 `--steps interpolate` 会**覆盖** fuse_server 刚生成的那份 `cameras_align.json`（若 preset 的 total/anchor 与 fuse_server 的用法不同，覆盖后内容就对不上了）。它**不碰** `cameras_spin.json`。
+- 它也没有 swing_total ≥ 4 之类的提前校验（只认 `total`）。
+- 若将来要补：改动集中在 `build_interpolate_args()` 改为返回 job 列表（对齐 `fuse_server.run_fuse_clip` 的做法），并让每个 job 自己带 `--output` / `--total` / `--anchor-camera`。注意 `ply_pipeline.py` 的 preset 里 `path` 是**必填**字段（fuse_server 是用 `cfg["project"]` 推导的），别把两边的路径约定搞混。
+
 ### v8 Daemon（`tills/server/`）
 - `_server.py`：共享的 SSE/HTTP 微框架，两个 daemon 共同 import。**修改 `_server.py` 前确认 train + fuse 两个进程的行为都不会被影响。**
 - `Cache-Control: no-cache` 已全局开启。由于页面是服务端渲染（f-string 拼 HTML），不加此 header 浏览器会缓存旧版本 HTML/JS，revert 代码后页面仍用缓存 → 看起来"没修好"。
@@ -153,4 +165,4 @@ CameraData/<project>/
 | `Docs/HANDOFF_2026-06-05.md` | 早期交接文档 |
 | `PIPELINE.md` | 旧 v1 管线说明 |
 
-*最后更新: 2026-07-10*
+*最后更新: 2026-09-13（新增 swing 轨迹与「已知缺口」小节）*
