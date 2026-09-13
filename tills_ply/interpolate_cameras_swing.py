@@ -38,6 +38,12 @@ step counts on both legs (i_peak == (N-1)/2, only possible for odd N), and
 forcing it makes the final step ~100x smaller than every other step so the
 timeline stalls at the ends.
 
+The turnaround is therefore always the exact midpoint (N-1)/2: a profile that
+returns to the anchor is necessarily symmetric, so no other turnaround is
+possible without opening the trajectory.  ``--turn-frame`` is kept only for
+manual/CLI experiments and gets recentred (with a warning) when it disagrees; the
+fuse_server UI does not expose it at all.
+
 Peak-to-peak: the camera swings to +X degrees, comes back through 0 and reaches
 -X degrees at the last frame — a 2X sweep whose end pose equals its start pose.
 There is deliberately no option to leave the trajectory open: an unclosed swing
@@ -168,10 +174,11 @@ def main():
                              "The actual on-screen direction depends on the fitted "
                              "plane normal; verify with --output and a test import.")
     parser.add_argument("--turn-frame", type=int, default=None,
-                        help="Frame index of the turnaround (default: the exact "
-                             "midpoint (N-1)/2, which is forced by the symmetry "
-                             "required for loop closure). off-centre angles emit a "
-                             "warning and fall back to the exact midpoint.")
+                        help="Manual override for the turnaround frame, for CLI "
+                             "experiments only. The default (and the only value "
+                             "that can close the loop) is the exact midpoint "
+                             "(N-1)/2, so any other value is corrected with a "
+                             "warning. Not exposed in the fuse_server UI.")
     parser.add_argument("--residual-blend", type=str, default="auto",
                         choices=["auto", "full", "none"],
                         help="How to blend the two anchors' SfM residuals: "
@@ -341,13 +348,13 @@ def main():
     # anchor.
     #
     # Sweeping past the far anchor (X > 2*pi - span, i.e. past the angularly
-    # opposite side) does fold the profile, but the practical effect is a soft
-    # bulge towards r_b, NOT a radial slide: measured on 0913 (span 180.25°,
-    # r_a 4.3354 / r_b 4.3331) the worst deviation across the whole sweep is
-    # 2.3 mm at ±359°, and 3e-6 m at ±180°.  So this is reported, never clamped —
-    # silently shrinking a user's ±180° to ±179.75° would be worse than the
-    # sub-millimetre effect it guards against.
-    room_deg = math.degrees(2 * math.pi - span)
+    # opposite side) does fold the profile, but the effect is a soft bulge towards
+    # r_b, NOT a radial slide: measured on 0913 (span 180.25°, r_a 4.3354 /
+    # r_b 4.3331) the worst deviation across the whole sweep is 3e-6 m at ±180°
+    # and 2.3 mm at ±359°.  So it is deliberately NOT clamped and deliberately NOT
+    # warned about: a full-length swing at a near-opposite anchor trip this
+    # condition routinely (0913 is 0.25° over), and nagging on the normal case
+    # would train the operator to ignore the log.
     max_sweep = 359.0
 
     # Semi-implicit raised cosine — the half-sample offset is what makes the
@@ -369,11 +376,6 @@ def main():
               f"the anchor there; use the circle pass for a full orbit)")
         amp_deg = math.copysign(max_sweep, amp_deg)
         peak_deg = abs(amp_deg)
-    elif peak_deg > room_deg:
-        print(f"NOTE: sweep ±{peak_deg:.2f}° goes {peak_deg - room_deg:.2f}° past "
-              f"the angularly opposite side (anchor gap {math.degrees(best_dist):.1f}°"
-              f" → room {room_deg:.2f}°). The radius profile folds slightly there; "
-              f"harmless when the two anchor radii are close.")
 
     angles = ang_a + dir_sign * np.radians(amp_deg) * v
 

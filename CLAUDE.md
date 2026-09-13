@@ -134,9 +134,9 @@ CameraData/<project>/
 - `--anchor-camera` 与 `--total` **都不在公共参数列表里**：两个 job 各自拼自己的值，脚本 CLI 保持完全对称（两个脚本都只认 `--anchor-camera` / `--total`）。
 - **帧数 = pose 数 = 时间轴长度**：`file-handler.ts` 导入时执行 `timeline.setFrames(len(json))`，所以每条 JSON 自带帧数、互不影响，视频时长 = `帧数 / fps`。渲染链路无需任何改动。
 - `swing_total` 必须 **≥ 4**（脚本 `N < 4` 直接报错）。`run_fuse_clip` 里**提前校验**，避免跑完 circle 重写完 `cameras_align.json` 才在 swing 步失败、留下半更新的工程。
-- ⚠️ `turn_frame` 与 `swing_total` **强耦合**：默认取 `(swing_total−1)/2`，且脚本强制居中（偏离 >0.5 帧就警告并拉回）。**建议 UI 里留空**；显式填写时改 `swing_total` 必须同步改，否则会被静默忽略。
+- **折返帧不可配置，恒为正中间 `(swing_total−1)/2`**：swing 的升余弦 profile 要首尾闭合就必然关于折返点对称，所以其它折返点不可能实现。`turn_frame` 已从前端（两个页面）、preset 字段、以及服务器拼参数里**全部移除**；服务器**不转发** preset 里残留的 `turn_frame`。脚本仍保留 `--turn-frame` 供命令行实验，偏离中点会 WARNING 并拉回——**不要再把它加回 UI**。
 - 锚点或帧数不同时，swing 的起始位置/旋转残差/半径曲线 `r_a`/**内参 fx,fy,width,height**（`--lock-intrinsics` 默认开）全部跟随 swing 锚点 → 同一个 PLY 的两条视频视角会不同，混剪需注意。
-- 摆幅上限只有 **359°**（整圈退化）。峰值越过"角向对面"（`X > 2π − span`）时 `_wrap_progress` 会折返，但半径始终被限制在 `[r_a, r_b]` 内、效果仅毫米级（0913 实测 ±359° 时最大偏差 2.3mm / 4.33m），所以**只提示不 clamp**——不要为了这点效应去改用户填的 ±180°。
+- 摆幅上限只有 **359°**（整圈退化）。峰值越过"角向对面"（`X > 2π − span`）时 `_wrap_progress` 会折返，但半径始终被限制在 `[r_a, r_b]` 内、效果仅毫米级（0913 实测 ±180° 时 3e-6 m、±359° 时 2.3mm / 4.33m），所以**既不 clamp 也不提示**——去掉提示是因为 0913 的常规配置天生就越界 0.25°，每次都刷警告会让日志失去意义；**也不要为了这点效应去改用户填的 ±180°**。
 
 ### v8 Daemon（`tills/server/`）
 - `_server.py`：共享的 SSE/HTTP 微框架，两个 daemon 共同 import。**修改 `_server.py` 前确认 train + fuse 两个进程的行为都不会被影响。**

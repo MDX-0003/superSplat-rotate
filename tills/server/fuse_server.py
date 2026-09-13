@@ -704,7 +704,6 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-mode', p.interpolate?.mode ?? 'both', false, true);
       pmSet('pm-i-swing_deg', p.interpolate?.swing_deg ?? 30);
       pmSet('pm-i-swing_dir', p.interpolate?.swing_dir ?? 'auto', false, true);
-      pmSet('pm-i-turn_frame', p.interpolate?.turn_frame, false, true);
       pmSet('pm-i-residual_blend', p.interpolate?.residual_blend ?? 'auto', false, true);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
@@ -754,9 +753,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.interpolate.mode=document.getElementById('pm-i-mode').value;
       params.interpolate.swing_deg=pF('pm-i-swing_deg');
       params.interpolate.swing_dir=document.getElementById('pm-i-swing_dir').value;
-      let tf = pI('pm-i-turn_frame');
       params.interpolate.residual_blend=document.getElementById('pm-i-residual_blend').value;
-      if (tf !== null) params.interpolate.turn_frame = tf;
       let r=await fetch('/presets/save',{{method:'POST',
        headers:{{'Content-Type':'application/json'}},
        body:JSON.stringify({{name:pmName,params:params}})}});
@@ -825,7 +822,7 @@ def build_fuse_page(state: FuseState) -> str:
       let m = document.getElementById('pm-i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
-      ['pm-i-swing_total','pm-i-swing_deg','pm-i-swing_dir','pm-i-turn_frame','pm-i-residual_blend'].forEach(id => {{
+      ['pm-i-swing_total','pm-i-swing_deg','pm-i-swing_dir','pm-i-residual_blend'].forEach(id => {{
         let el = document.getElementById(id); if (!el) return;
         el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
       }});
@@ -956,7 +953,6 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="right">right（+角度方向）</option>
               <option value="left">left（−角度方向）</option>
             </select><span class="tip">第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
-          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
           <div class="fd"><label>residual_blend</label>
             <select id="pm-i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
               <option value="auto">auto（三角混合,锚点精确）</option>
@@ -1085,8 +1081,12 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                            "--dir", str(ip.get("swing_dir", "auto"))]
             if ip.get("swing_deg") is not None:
                 swing_extra += ["--swing-deg", str(ip["swing_deg"])]
-            if ip.get("turn_frame") is not None:
-                swing_extra += ["--turn-frame", str(ip["turn_frame"])]
+            # No --turn-frame: the turnaround is always forced to the exact
+            # midpoint (N-1)/2 because a profile that returns to the anchor is
+            # necessarily symmetric.  The script would warn and recentre any
+            # value we sent, so the UI no longer exposes it — and any turn_frame
+            # still sitting in an older preset is ignored here rather than
+            # forwarded.
             if ip.get("residual_blend"):
                 swing_extra += ["--residual-blend", str(ip["residual_blend"])]
             jobs.append(("swing", swing_script, swing_extra, "cameras_spin.json"))
@@ -1719,8 +1719,6 @@ def _build_presets_page() -> str:
           <option value="right">right（+角度方向）</option>
           <option value="left">left（−角度方向）</option>
         </select><span class="tip">第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
-      <div class="field"><label>turn_frame</label>
-        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
       <div class="field"><label>residual_blend</label>
         <select id="i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
           <option value="auto">auto（三角混合,锚点精确）</option>
@@ -1790,7 +1788,6 @@ def _build_presets_page() -> str:
       // than an empty box, so saving never writes null into the preset.
       setVal('i-swing_deg', p.interpolate?.swing_deg ?? 30);
       setVal('i-swing_dir', p.interpolate?.swing_dir ?? 'auto', false, true);
-      setVal('i-turn_frame', p.interpolate?.turn_frame, false, true);
       setVal('i-residual_blend', p.interpolate?.residual_blend ?? 'auto', false, true);
       toggleBias(); toggleDenoise(); toggleRing(); toggleSwing();
     }}
@@ -1850,7 +1847,7 @@ def _build_presets_page() -> str:
       let m = document.getElementById('i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
-      ['i-swing_total','i-swing_deg','i-swing_dir','i-turn_frame','i-residual_blend'].forEach(id => {{
+      ['i-swing_total','i-swing_deg','i-swing_dir','i-residual_blend'].forEach(id => {{
         let el = document.getElementById(id); if (!el) return;
         el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
       }});
@@ -1911,9 +1908,7 @@ def _build_presets_page() -> str:
       params.interpolate.mode = document.getElementById('i-mode').value;
       params.interpolate.swing_deg = floatVal('i-swing_deg');
       params.interpolate.swing_dir = document.getElementById('i-swing_dir').value;
-      let tf2 = intVal('i-turn_frame');
       params.interpolate.residual_blend = document.getElementById('i-residual_blend').value;
-      if (tf2 !== null) params.interpolate.turn_frame = tf2;
       return params;
     }}
 
