@@ -120,16 +120,22 @@ CameraData/<project>/
 - 历史 bug（2026-09-13 修复）：`interpolate_cameras_circle.py` 曾用 `anchor_idx = d["id"]`。当 id 是 1-based 时**静默错位一台相机**（日志看起来完全正常，但 index 0 是 007 而不是 006）；id 稀疏时直接 `IndexError`。当前 LiteGS 产出的 `cameras.json` 恰好 `id == 数组下标`（21 个项目实测全部成立），所以修复前后输出**逐字节相同**。
 - 新脚本 `interpolate_cameras_swing.py` 从一开始就用 `enumerate`。日志同时打印 `array_index=` 和 `(file id=)` 便于对账。
 
-### 两条轨迹的起点锚点（`interpolate` preset 字段）
+### 两条轨迹的起点锚点与帧数（`interpolate` preset 字段）
 - `anchor_camera` = **circle**（转一圈）的起始机位；`swing_anchor_camera` = **swing**（摆动）的起始机位。
-- **`swing_anchor_camera` 留空 / 缺失 / 纯空白 → 回落到 `anchor_camera`**，因此老 preset 与"只填一个"的用法行为不变。服务器侧的回落写在 `fuse_server.py` 的 `run_fuse_clip`：
+- `total` = **circle** 的帧数；`swing_total` = **swing** 的帧数（改大 = 摆动更慢更顺）。
+- **两个 swing 专属字段留空 / 缺失 / 0 / 纯空白 → 回落到对应的 circle 字段**，因此老 preset 与"只填一个"的用法行为不变。服务器侧的回落写在 `fuse_server.py` 的 `run_fuse_clip`：
   ```python
   circle_anchor = str(ip.get("anchor_camera") or "006")
   swing_anchor  = str(ip.get("swing_anchor_camera") or "").strip() or circle_anchor
+  circle_total  = int(ip.get("total") or 300)
+  swing_total   = int(ip.get("swing_total") or 0) or circle_total
   ```
-  注意 `or` 是必需的——空字符串也要回落，否则会传 `--anchor-camera ""`。
-- `--anchor-camera` **不在公共参数列表里**：两个 job 各自拼自己的锚点，脚本 CLI 保持完全对称（两个脚本都只认 `--anchor-camera`）。
-- 两者不同时，swing 的起始位置/旋转残差/半径曲线 `r_a`/**内参 fx,fy,width,height**（`--lock-intrinsics` 默认开）全部跟随 swing 锚点 → 同一个 PLY 的两条视频视角会不同，混剪需注意。
+  注意 `or` 是必需的——空字符串/0 也要回落，否则会传 `--anchor-camera ""` 或 `--total 0`。
+- `--anchor-camera` 与 `--total` **都不在公共参数列表里**：两个 job 各自拼自己的值，脚本 CLI 保持完全对称（两个脚本都只认 `--anchor-camera` / `--total`）。
+- **帧数 = pose 数 = 时间轴长度**：`file-handler.ts` 导入时执行 `timeline.setFrames(len(json))`，所以每条 JSON 自带帧数、互不影响，视频时长 = `帧数 / fps`。渲染链路无需任何改动。
+- `swing_total` 必须 **≥ 4**（脚本 `N < 4` 直接报错）。`run_fuse_clip` 里**提前校验**，避免跑完 circle 重写完 `cameras_align.json` 才在 swing 步失败、留下半更新的工程。
+- ⚠️ `turn_frame` 与 `swing_total` **强耦合**：默认取 `(swing_total−1)/2`，且脚本强制居中（偏离 >0.5 帧就警告并拉回）。**建议 UI 里留空**；显式填写时改 `swing_total` 必须同步改，否则会被静默忽略。
+- 锚点或帧数不同时，swing 的起始位置/旋转残差/半径曲线 `r_a`/**内参 fx,fy,width,height**（`--lock-intrinsics` 默认开）全部跟随 swing 锚点 → 同一个 PLY 的两条视频视角会不同，混剪需注意。
 - 摆幅上限只有 **359°**（整圈退化）。峰值越过"角向对面"（`X > 2π − span`）时 `_wrap_progress` 会折返，但半径始终被限制在 `[r_a, r_b]` 内、效果仅毫米级（0913 实测 ±359° 时最大偏差 2.3mm / 4.33m），所以**只提示不 clamp**——不要为了这点效应去改用户填的 ±180°。
 
 ### v8 Daemon（`tills/server/`）

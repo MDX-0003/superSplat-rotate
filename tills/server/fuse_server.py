@@ -690,6 +690,7 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-c-ring_height_up', p.clip?.ring_height_up);
       pmSet('pm-c-ring_height_down', p.clip?.ring_height_down);
       pmSet('pm-i-total', p.interpolate?.total);
+      pmSet('pm-i-swing_total', p.interpolate?.swing_total);
       pmSet('pm-i-anchor_camera', p.interpolate?.anchor_camera, false, true);
       pmSet('pm-i-swing_anchor_camera', p.interpolate?.swing_anchor_camera, false, true);
       pmSet('pm-i-radius_scale', p.interpolate?.radius_scale);
@@ -739,6 +740,7 @@ def build_fuse_page(state: FuseState) -> str:
       params.clip.ring_height_up=pF('pm-c-ring_height_up');
       params.clip.ring_height_down=pF('pm-c-ring_height_down');
       params.interpolate.total=pI('pm-i-total');
+      params.interpolate.swing_total=pI('pm-i-swing_total');
       params.interpolate.anchor_camera=document.getElementById('pm-i-anchor_camera').value;
       params.interpolate.swing_anchor_camera=document.getElementById('pm-i-swing_anchor_camera').value.trim();
       params.interpolate.radius_scale=pF('pm-i-radius_scale');
@@ -820,7 +822,7 @@ def build_fuse_page(state: FuseState) -> str:
       let m = document.getElementById('pm-i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
-      ['pm-i-swing_deg','pm-i-swing_dir','pm-i-turn_frame','pm-i-residual_blend'].forEach(id => {{
+      ['pm-i-swing_total','pm-i-swing_deg','pm-i-swing_dir','pm-i-turn_frame','pm-i-residual_blend'].forEach(id => {{
         let el = document.getElementById(id); if (!el) return;
         el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
       }});
@@ -920,7 +922,8 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="circle">circle（只生成转一圈）</option>
               <option value="swing">swing（只生成左右摆动）</option>
             </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
-          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
+          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">[circle] 转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
+          <div class="fd"><label>swing_total</label><input type="text" id="pm-i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">[swing] 摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
           <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
           <div class="fd"><label>swing_anchor_camera</label><input type="text" id="pm-i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">[swing] 摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
@@ -940,7 +943,7 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="right">right（+角度方向）</option>
               <option value="left">left（−角度方向）</option>
             </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
-          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。留空=正中间（闭合所需，居中否则会被强制拉回）</span></div>
+          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
           <div class="fd"><label>residual_blend</label>
             <select id="pm-i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
               <option value="auto">auto（三角混合,锚点精确）</option>
@@ -1012,12 +1015,12 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
 
         # Shared args are identical for both passes: the swing MUST use the same
         # circle fit, anchor radius/height/intrinsics range as the orbit,
-        # otherwise the two trajectories would disagree about the scene.  The
-        # ANCHOR is deliberately NOT shared — see per-job args below.
+        # otherwise the two trajectories would disagree about the scene.
+        # Deliberately NOT shared (each job appends its own): the start anchor and
+        # the frame count.
         common = [
             "--path", proj_path,
             "--max-index", str(max_index),
-            "--total", str(ip.get("total", 300)),
             "--radius-scale", str(ip.get("radius_scale", 1.0)),
             "--height-offset", str(ip.get("height_offset", 0.0)),
             "--pitch-offset", str(ip.get("pitch_offset", 0.0)),
@@ -1030,16 +1033,42 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
         circle_anchor = str(ip.get("anchor_camera") or "006")
         swing_anchor = str(ip.get("swing_anchor_camera") or "").strip() or circle_anchor
 
+        # Two trajectories, two independently configurable frame counts.  The
+        # frame count IS the timeline length (SuperSplat does
+        # timeline.setFrames(len(json)) on import), so this also sets each video's
+        # duration = total / fps.  ``swing_total`` empty/0/missing falls back to
+        # ``total``.
+        try:
+            circle_total = int(ip.get("total") or 300)
+        except (TypeError, ValueError):
+            _log(f"ERROR: interpolate.total 不是整数: {ip.get('total')!r}")
+            return
+        try:
+            swing_total = int(ip.get("swing_total") or 0) or circle_total
+        except (TypeError, ValueError):
+            _log(f"ERROR: interpolate.swing_total 不是整数: {ip.get('swing_total')!r}")
+            return
+
+        # Fail BEFORE running anything: interpolate_cameras_swing.py rejects N < 4,
+        # and finding that out only after the circle pass has rewritten
+        # cameras_align.json would leave the project half-updated.
+        if mode in ("swing", "both") and swing_total < 4:
+            _log(f"ERROR: swing_total 必须 >= 4（当前 {swing_total}）——swing 轨迹"
+                 f"至少需要一个起点、一个折返点、一个回程点")
+            return
+
         jobs = []  # (label, script, extra args, output name)
         if mode in ("circle", "both"):
             jobs.append((
                 "circle", interp_script,
-                ["--anchor-camera", circle_anchor,
+                ["--total", str(circle_total),
+                 "--anchor-camera", circle_anchor,
                  "--direction", str(ip.get("direction", "auto"))],
                 "cameras_align.json",
             ))
         if mode in ("swing", "both"):
-            swing_extra = ["--anchor-camera", swing_anchor,
+            swing_extra = ["--total", str(swing_total),
+                           "--anchor-camera", swing_anchor,
                            "--dir", str(ip.get("swing_dir", "auto"))]
             if ip.get("swing_deg") is not None:
                 swing_extra += ["--swing-deg", str(ip["swing_deg"])]
@@ -1049,8 +1078,11 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
                 swing_extra += ["--residual-blend", str(ip["residual_blend"])]
             jobs.append(("swing", swing_script, swing_extra, "cameras_spin.json"))
 
-        if swing_anchor != circle_anchor:
+        if swing_anchor != circle_anchor and mode in ("swing", "both"):
             _log(f"anchor cameras : circle={circle_anchor}  swing={swing_anchor}")
+        if swing_total != circle_total and mode in ("swing", "both"):
+            _log(f"frame counts   : circle={circle_total}  swing={swing_total} "
+                 f"(swing 时长 = {swing_total}/fps)")
 
         for label, script, extra, out_name in jobs:
             if not script.exists():
@@ -1639,7 +1671,9 @@ def _build_presets_page() -> str:
           <option value="swing">swing（只生成左右摆动）</option>
         </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
       <div class="field"><label>total</label>
-        <input type="text" id="i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
+        <input type="text" id="i-total" step="1" size="4"><span class="tip">[circle] 转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
+      <div class="field"><label>swing_total</label>
+        <input type="text" id="i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">[swing] 摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
       <div class="field"><label>anchor_camera</label>
         <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
       <div class="field"><label>swing_anchor_camera</label>
@@ -1667,7 +1701,7 @@ def _build_presets_page() -> str:
           <option value="left">left（−角度方向）</option>
         </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
       <div class="field"><label>turn_frame</label>
-        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。留空=正中间（闭合所需，居中否则会被强制拉回）</span></div>
+        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
       <div class="field"><label>residual_blend</label>
         <select id="i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
           <option value="auto">auto（三角混合,锚点精确）</option>
@@ -1724,6 +1758,7 @@ def _build_presets_page() -> str:
       setVal('c-ring_height_up', p.clip?.ring_height_up);
       setVal('c-ring_height_down', p.clip?.ring_height_down);
       setVal('i-total', p.interpolate?.total);
+      setVal('i-swing_total', p.interpolate?.swing_total);
       setVal('i-anchor_camera', p.interpolate?.anchor_camera, false, true);
       setVal('i-swing_anchor_camera', p.interpolate?.swing_anchor_camera, false, true);
       setVal('i-radius_scale', p.interpolate?.radius_scale);
@@ -1796,7 +1831,7 @@ def _build_presets_page() -> str:
       let m = document.getElementById('i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
-      ['i-swing_deg','i-swing_dir','i-turn_frame','i-residual_blend'].forEach(id => {{
+      ['i-swing_total','i-swing_deg','i-swing_dir','i-turn_frame','i-residual_blend'].forEach(id => {{
         let el = document.getElementById(id); if (!el) return;
         el.disabled = !swingOn; el.parentElement.style.display = swingOn ? '' : 'none';
       }});
@@ -1840,6 +1875,7 @@ def _build_presets_page() -> str:
       params.clip.ring_height_up = floatVal('c-ring_height_up');
       params.clip.ring_height_down = floatVal('c-ring_height_down');
       params.interpolate.total = intVal('i-total');
+      params.interpolate.swing_total = intVal('i-swing_total');
       params.interpolate.anchor_camera = document.getElementById('i-anchor_camera').value;
       params.interpolate.swing_anchor_camera = document.getElementById('i-swing_anchor_camera').value.trim();
       params.interpolate.radius_scale = floatVal('i-radius_scale');
