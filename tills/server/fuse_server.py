@@ -69,6 +69,20 @@ def _load_template_preset() -> dict:
     return templates.get("template", {})
 
 
+# Default trajectory set per project. "both" = one fuse run writes BOTH
+# cameras_align.json (orbit) and cameras_spin.json (swing). Presets stored before
+# the swing trajectory existed have no ``interpolate.mode``; they must still get
+# both files rather than silently dropping the swing pass.
+DEFAULT_INTERP_MODE = "both"
+VALID_INTERP_MODES = ("circle", "swing", "both")
+
+
+def _interp_mode(interp: dict) -> str:
+    """Resolve a preset's ``interpolate.mode``, tolerating junk and missing keys."""
+    mode = str(interp.get("mode") or DEFAULT_INTERP_MODE)
+    return mode if mode in VALID_INTERP_MODES else DEFAULT_INTERP_MODE
+
+
 def _save_all_presets(presets: dict) -> None:
     """Atomically write the full presets dict back to presets.json."""
     data = {"_doc": "Named parameter presets for ply_pipeline.py.", "presets": presets}
@@ -682,11 +696,11 @@ def build_fuse_page(state: FuseState) -> str:
       pmSet('pm-i-pitch_offset', p.interpolate?.pitch_offset);
       pmSet('pm-i-fov_x', p.interpolate?.fov_x);
       pmSet('pm-i-direction', p.interpolate?.direction, false, true);
-      pmSet('pm-i-mode', p.interpolate?.mode, false, true);
-      pmSet('pm-i-swing_deg', p.interpolate?.swing_deg);
-      pmSet('pm-i-swing_dir', p.interpolate?.swing_dir, false, true);
+      pmSet('pm-i-mode', p.interpolate?.mode ?? 'both', false, true);
+      pmSet('pm-i-swing_deg', p.interpolate?.swing_deg ?? 30);
+      pmSet('pm-i-swing_dir', p.interpolate?.swing_dir ?? 'auto', false, true);
       pmSet('pm-i-turn_frame', p.interpolate?.turn_frame, false, true);
-      pmSet('pm-i-residual_blend', p.interpolate?.residual_blend, false, true);
+      pmSet('pm-i-residual_blend', p.interpolate?.residual_blend ?? 'auto', false, true);
       document.getElementById('pm-f-bias_margin').disabled = !p.fuse?.bias;
       document.getElementById('pm-f-bias_radius_percentile').disabled = !p.fuse?.bias;
       pmToggleDenoise(); pmToggleRing(); pmToggleSwing();
@@ -900,10 +914,10 @@ def build_fuse_page(state: FuseState) -> str:
         <div class="ms"><h3>interpolate 参数</h3>
           <div class="fd"><label>mode</label>
             <select id="pm-i-mode" onchange="pmToggleSwing()" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
+              <option value="both">both（两条轨迹都生成 · 推荐）</option>
               <option value="circle">circle（只生成转一圈）</option>
               <option value="swing">swing（只生成左右摆动）</option>
-              <option value="both">both（两条轨迹都生成）</option>
-            </select><span class="tip">轨迹类型。circle → cameras_align.json（转一圈）；swing → cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
+            </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
           <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
           <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">锚点相机编号（circle 与 swing 的起始机位）</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
@@ -987,13 +1001,11 @@ def run_fuse_clip(state: FuseState, cfg: dict, preset: dict,
     new_combine = None  # set after successful fuse, used in finally for auto-select
     try:
         # Step 0: Interpolate trajectories (generate cameras_align.json and/or
-        # cameras_spin.json).  ``mode`` defaults to "circle" so every existing
-        # preset behaves exactly as before this feature was added.
+        # cameras_spin.json).  ``mode`` defaults to "both" so every fuse run
+        # writes BOTH JSONs; presets stored before the swing pass existed simply
+        # have no mode key and get the same default.
         ip = preset.get("interpolate", {})
-        mode = str(ip.get("mode", "circle"))
-        if mode not in ("circle", "swing", "both"):
-            _log(f"WARNING: unknown interpolate.mode '{mode}', falling back to 'circle'")
-            mode = "circle"
+        mode = _interp_mode(ip)
 
         # Shared args are identical for both passes: the swing MUST use the same
         # circle fit, anchor and intrinsics as the orbit, otherwise the two
@@ -1608,10 +1620,10 @@ def _build_presets_page() -> str:
       <h2>interpolate 参数</h2>
       <div class="field"><label>mode</label>
         <select id="i-mode" onchange="toggleSwing()" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
+          <option value="both">both（两条轨迹都生成 · 推荐）</option>
           <option value="circle">circle（只生成转一圈）</option>
           <option value="swing">swing（只生成左右摆动）</option>
-          <option value="both">both（两条轨迹都生成）</option>
-        </select><span class="tip">轨迹类型。circle → cameras_align.json（转一圈）；swing → cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
+        </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
       <div class="field"><label>total</label>
         <input type="text" id="i-total" step="1" size="4"><span class="tip">插值总帧数</span></div>
       <div class="field"><label>anchor_camera</label>
@@ -1702,13 +1714,13 @@ def _build_presets_page() -> str:
       setVal('i-pitch_offset', p.interpolate?.pitch_offset);
       setVal('i-fov_x', p.interpolate?.fov_x);
       setVal('i-direction', p.interpolate?.direction, false, true);
-      setVal('i-mode', p.interpolate?.mode, false, true);
+      setVal('i-mode', p.interpolate?.mode ?? 'both', false, true);
       // swing_deg has a real default in the interpolator (30) — show it rather
       // than an empty box, so saving never writes null into the preset.
       setVal('i-swing_deg', p.interpolate?.swing_deg ?? 30);
-      setVal('i-swing_dir', p.interpolate?.swing_dir, false, true);
+      setVal('i-swing_dir', p.interpolate?.swing_dir ?? 'auto', false, true);
       setVal('i-turn_frame', p.interpolate?.turn_frame, false, true);
-      setVal('i-residual_blend', p.interpolate?.residual_blend, false, true);
+      setVal('i-residual_blend', p.interpolate?.residual_blend ?? 'auto', false, true);
       toggleBias(); toggleDenoise(); toggleRing(); toggleSwing();
     }}
 
@@ -1892,6 +1904,11 @@ def _make_fuse_routes(state: FuseState, cfg: dict,
             return json.dumps({"status": "error",
                                "message": f"preset not found: {preset_name}"}), \
                    "application/json; charset=utf-8"
+        # Materialise the trajectory mode on the preset we pass to the worker, so
+        # a legacy preset without interpolate.mode resolves to "both" (and gets
+        # recorded as such) instead of defaulting anywhere implicitly.
+        preset.setdefault("interpolate", {})
+        preset["interpolate"]["mode"] = _interp_mode(preset["interpolate"])
         with state._lock:
             state.active_tasks.add("fuse")
         t = threading.Thread(
@@ -1979,6 +1996,14 @@ def _make_fuse_routes(state: FuseState, cfg: dict,
 
     def _presets_data(handler):
         presets = _load_all_presets()
+        # Make the trajectory mode explicit for the editors: a preset without
+        # interpolate.mode runs both passes, so show "both" rather than leaving
+        # the dropdown to fall back to its first option.
+        for p in presets.values():
+            if isinstance(p.get("interpolate"), dict):
+                p["interpolate"]["mode"] = _interp_mode(p["interpolate"])
+            elif "interpolate" not in p:
+                p["interpolate"] = {"mode": DEFAULT_INTERP_MODE}
         return json.dumps({"presets": presets}, ensure_ascii=False), \
                "application/json; charset=utf-8"
 
