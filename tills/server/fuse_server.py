@@ -265,6 +265,9 @@ _CSS = """
   .modal-card .fd select{padding:3px 5px;border:1px solid #d9cfb8;
                            border-radius:3px;font-size:13px;background:#fffdf7}
   .tip{font-size:11px;color:#aaa295;flex:1;min-width:120px;line-height:1.4}
+  .subsec{margin-top:12px;padding-top:9px;border-top:1px dashed #d9cfb8;
+          font-size:12px;font-weight:600;color:#7a8a6a}
+  .subsec .hint{font-weight:400;color:#aaa295}
 </style>
 """
 
@@ -816,9 +819,9 @@ def build_fuse_page(state: FuseState) -> str:
       if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
     }}
     function pmToggleSwing() {{
-      // swing-only fields appear when mode is swing/both; direction is
-      // circle-only. Enabled state and visibility move together so a hidden
-      // field can never be saved with a stale value.
+      // swing-only fields appear when mode is swing/both; direction and the
+      // circle group header are circle-only. Enabled state and visibility move
+      // together so a hidden field can never be saved with a stale value.
       let m = document.getElementById('pm-i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
@@ -831,6 +834,12 @@ def build_fuse_page(state: FuseState) -> str:
         dEl.disabled = !circleOn;
         dEl.parentElement.style.display = circleOn ? '' : 'none';
       }}
+      // Group headers follow their own group, so the separator never labels a
+      // block whose fields are all hidden.
+      let hc = document.getElementById('pm-i-h-circle');
+      if (hc) hc.style.display = circleOn ? '' : 'none';
+      let hs = document.getElementById('pm-i-h-swing');
+      if (hs) hs.style.display = swingOn ? '' : 'none';
     }}
     // ── restore persisted selections on page load ──
     (function() {{
@@ -922,10 +931,10 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="circle">circle（只生成转一圈）</option>
               <option value="swing">swing（只生成左右摆动）</option>
             </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
-          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">[circle] 转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
-          <div class="fd"><label>swing_total</label><input type="text" id="pm-i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">[swing] 摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
-          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
-          <div class="fd"><label>swing_anchor_camera</label><input type="text" id="pm-i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">[swing] 摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
+
+          <div class="subsec" id="pm-i-h-circle">circle 轨迹 <span class="hint">（转一圈 → cameras_align.json）</span></div>
+          <div class="fd"><label>total</label><input type="text" id="pm-i-total" step="1" size="4"><span class="tip">转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
+          <div class="fd"><label>anchor_camera</label><input type="text" id="pm-i-anchor_camera" placeholder="006" size="4"><span class="tip">转一圈轨迹的起始机位</span></div>
           <div class="fd"><label>radius_scale</label><input type="text" id="pm-i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
           <div class="fd"><label>height_offset (m)</label><input type="text" id="pm-i-height_offset" step="0.01" size="5"><span class="tip">沿平面法线偏移。正值=法线方向</span></div>
           <div class="fd"><label>pitch_offset (deg)</label><input type="text" id="pm-i-pitch_offset" step="0.1" size="5"><span class="tip">绕相机右轴俯仰角偏移。正=抬头,负=低头</span></div>
@@ -935,21 +944,25 @@ def build_fuse_page(state: FuseState) -> str:
               <option value="auto">auto（跟随拍摄方向）</option>
               <option value="same">same（与拍摄一致）</option>
               <option value="opposite">opposite（与拍摄相反）</option>
-            </select><span class="tip">[circle] 插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
-          <div class="fd"><label>swing_deg (deg)</label><input type="text" id="pm-i-swing_deg" step="1" size="5"><span class="tip">[swing] 摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
+            </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+
+          <div class="subsec" id="pm-i-h-swing">swing 轨迹 <span class="hint">（留空的项自动沿用上面的 circle 值）</span></div>
+          <div class="fd"><label>swing_total</label><input type="text" id="pm-i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
+          <div class="fd"><label>swing_anchor_camera</label><input type="text" id="pm-i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
+          <div class="fd"><label>swing_deg (deg)</label><input type="text" id="pm-i-swing_deg" step="1" size="5"><span class="tip">摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
           <div class="fd"><label>swing_dir</label>
             <select id="pm-i-swing_dir" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
               <option value="auto">auto（跟随拍摄方向）</option>
               <option value="right">right（+角度方向）</option>
               <option value="left">left（−角度方向）</option>
-            </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
-          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
+            </select><span class="tip">第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
+          <div class="fd"><label>turn_frame</label><input type="text" id="pm-i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
           <div class="fd"><label>residual_blend</label>
             <select id="pm-i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:12px;background:#fffdf7">
               <option value="auto">auto（三角混合,锚点精确）</option>
               <option value="full">full（去程→远锚点残差）</option>
               <option value="none">none（纯 look-at 无 SfM 修正）</option>
-            </select><span class="tip">[swing] 两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
+            </select><span class="tip">两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
         </div>
       </div>
     </div>
@@ -1592,6 +1605,9 @@ def _build_presets_page() -> str:
     .field input[type="text"]{{width:140px}}
     .field input[type="checkbox"]{{width:auto;margin-right:4px}}
     .tip{{font-size:11px;color:#aaa295;flex:1;min-width:120px;line-height:1.4;margin-left:2px}}
+    .subsec{{margin-top:12px;padding-top:9px;border-top:1px dashed #d9cfb8;
+            font-size:12px;font-weight:600;color:#7a8a6a}}
+    .subsec .hint{{font-weight:400;color:#aaa295}}
     #editor{{display:none}}
     #no-preset{{color:#7a7368;font-size:14px;padding:20px 0}}
     body{{max-width:1050px}}
@@ -1670,14 +1686,11 @@ def _build_presets_page() -> str:
           <option value="circle">circle（只生成转一圈）</option>
           <option value="swing">swing（只生成左右摆动）</option>
         </select><span class="tip">每次点按钮会重新生成勾选的 JSON（覆盖同名文件）。both → cameras_align.json（转一圈）+ cameras_spin.json（从锚点相机摆动 ±X 度后回到起点，可无缝循环）</span></div>
+      <div class="subsec" id="i-h-circle">circle 轨迹 <span class="hint">（转一圈 → cameras_align.json）</span></div>
       <div class="field"><label>total</label>
-        <input type="text" id="i-total" step="1" size="4"><span class="tip">[circle] 转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
-      <div class="field"><label>swing_total</label>
-        <input type="text" id="i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">[swing] 摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
+        <input type="text" id="i-total" step="1" size="4"><span class="tip">转一圈轨迹的帧数（= 时间轴长度，时长 = total/fps）</span></div>
       <div class="field"><label>anchor_camera</label>
-        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">[circle] 转一圈轨迹的起始机位</span></div>
-      <div class="field"><label>swing_anchor_camera</label>
-        <input type="text" id="i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">[swing] 摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
+        <input type="text" id="i-anchor_camera" placeholder="006" size="4"><span class="tip">转一圈轨迹的起始机位</span></div>
       <div class="field"><label>radius_scale</label>
         <input type="text" id="i-radius_scale" step="0.01" size="5"><span class="tip">插值圆半径缩放系数</span></div>
       <div class="field"><label>height_offset (m)</label>
@@ -1691,23 +1704,29 @@ def _build_presets_page() -> str:
           <option value="auto">auto（跟随拍摄方向）</option>
           <option value="same">same（与拍摄一致）</option>
           <option value="opposite">opposite（与拍摄相反）</option>
-        </select><span class="tip">[circle] 插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+        </select><span class="tip">插值圆旋转方向：auto=自动判断（推荐）,same=与相机编号增大方向一致,opposite=相反</span></div>
+
+      <div class="subsec" id="i-h-swing">swing 轨迹 <span class="hint">（留空的项自动沿用上面的 circle 值）</span></div>
+      <div class="field"><label>swing_total</label>
+        <input type="text" id="i-swing_total" step="1" size="4" placeholder="留空=同上"><span class="tip">摆动轨迹的帧数。留空 = 与 total 相同。改大 = 摆动更慢更顺（时长 = swing_total/fps）；两条 JSON 各自带自己的帧数，互不影响</span></div>
+      <div class="field"><label>swing_anchor_camera</label>
+        <input type="text" id="i-swing_anchor_camera" placeholder="留空=同上" size="4"><span class="tip">摆动轨迹的起始机位。留空或与 anchor_camera 相同 = 两条轨迹起点一致（推荐，混剪时接得上）。填别的机位则摆动从该机位出发，其 fx/fy/视角也随之改变</span></div>
       <div class="field"><label>swing_deg (deg)</label>
-        <input type="text" id="i-swing_deg" step="1" size="5"><span class="tip">[swing] 摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
+        <input type="text" id="i-swing_deg" step="1" size="5"><span class="tip">摆动幅度：镜头摆到 +X 度再回到 -X 度，即峰峰值 2X。默认 30（±30°，峰峰 60°）</span></div>
       <div class="field"><label>swing_dir</label>
         <select id="i-swing_dir" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
           <option value="auto">auto（跟随拍摄方向）</option>
           <option value="right">right（+角度方向）</option>
           <option value="left">left（−角度方向）</option>
-        </select><span class="tip">[swing] 第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
+        </select><span class="tip">第一次摆动的方向。auto = 与拍摄编号增大方向一致，与 circle 的 auto 同义</span></div>
       <div class="field"><label>turn_frame</label>
-        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">[swing] 折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
+        <input type="text" id="i-turn_frame" step="1" size="4" placeholder="自动"><span class="tip">折返帧号。建议留空 = 自动取正中间 (swing_total−1)/2（闭合所需，居中否则会被强制拉回）。若显式填写，必须等于 (swing_total−1)/2，且改 swing_total 后要同步改</span></div>
       <div class="field"><label>residual_blend</label>
         <select id="i-residual_blend" style="padding:2px 4px;border:1px solid #d9cfb8;border-radius:3px;font-size:13px;background:#fffdf7">
           <option value="auto">auto（三角混合,锚点精确）</option>
           <option value="full">full（去程→远锚点残差）</option>
           <option value="none">none（纯 look-at 无 SfM 修正）</option>
-        </select><span class="tip">[swing] 两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
+        </select><span class="tip">两个锚点 SfM 残差的混合方式。auto 推荐：起点与真实相机完全一致</span></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px">
       <button onclick="doSave()">保存</button>
@@ -1825,9 +1844,9 @@ def _build_presets_page() -> str:
       if (rsEl) rsEl.disabled = !(b || (denoiseOn && isRegion));
     }}
     function toggleSwing() {{
-      // swing-only fields appear when mode is swing/both; direction is
-      // circle-only. Visibility and enabled state move together so a hidden
-      // field can never be saved with a stale value.
+      // swing-only fields appear when mode is swing/both; direction and the
+      // circle group header are circle-only. Visibility and enabled state move
+      // together so a hidden field can never be saved with a stale value.
       let m = document.getElementById('i-mode').value;
       let swingOn = (m === 'swing' || m === 'both');
       let circleOn = (m === 'circle' || m === 'both');
@@ -1840,6 +1859,12 @@ def _build_presets_page() -> str:
         dEl.disabled = !circleOn;
         dEl.parentElement.style.display = circleOn ? '' : 'none';
       }}
+      // Group headers follow their own group, so the separator never labels a
+      // block whose fields are all hidden.
+      let hc = document.getElementById('i-h-circle');
+      if (hc) hc.style.display = circleOn ? '' : 'none';
+      let hs = document.getElementById('i-h-swing');
+      if (hs) hs.style.display = swingOn ? '' : 'none';
     }}
 
     function floatVal(id) {{
