@@ -433,8 +433,11 @@ def apply_bias(main_verts, filtered_others, center, normal, u1, u2,
         nx = max(1, int(np.ceil((maxs[0] - mins[0]) / grid_cell)))
         ny = max(1, int(np.ceil((maxs[1] - mins[1]) / grid_cell)))
 
-        ix = np.clip(np.floor((pts_2d[:, 0] - mins[0]) / grid_cell).astype(np.int32), 0, nx - 1)
-        iy = np.clip(np.floor((pts_2d[:, 1] - mins[1]) / grid_cell).astype(np.int32), 0, ny - 1)
+        # int64 cell indices: nx*ny overflows int32 (and wraps negative) as soon
+        # as the 2D bounding box exceeds ~46341 cells per axis, which np.bincount
+        # rejects with "'list' argument must have no negative elements".
+        ix = np.clip(np.floor((pts_2d[:, 0] - mins[0]) / grid_cell).astype(np.int64), 0, nx - 1)
+        iy = np.clip(np.floor((pts_2d[:, 1] - mins[1]) / grid_cell).astype(np.int64), 0, ny - 1)
         flat = ix * ny + iy
         counts = np.bincount(flat, minlength=nx * ny)
         peak_flat = int(np.argmax(counts))
@@ -455,11 +458,31 @@ def apply_bias(main_verts, filtered_others, center, normal, u1, u2,
 
     pct = args.bias_radius_percentile
     main_2d = project_to_plane(main_verts[:, :3])
-    main_c, main_r, main_peak, main_core = density_core(main_2d)
+
+    # The main PLY is kept entirely (never cylinder-filtered), so it can carry
+    # stray far-field outliers — 0914-175813.ply reaches 11.8 km from the circle.
+    # Those outliers do not change the core (the densest cell wins regardless),
+    # but they blow the density grid up to ~5e11 cells, which is both an int32
+    # overflow and an impossible allocation.  Estimate the core from the points
+    # that can actually be part of it: within the cylinder radius plus one margin
+    # cell.  Points outside only ever formed empty cells before, so the peak cell,
+    # the core centroid and the returned mask are unaffected.
+    core_sel = np.linalg.norm(main_2d, axis=1) <= (effective_r + 0.15)
+    n_sel = int(core_sel.sum())
+    if n_sel < 10:
+        core_sel = np.ones(main_2d.shape[0], dtype=bool)
+        n_sel = main_2d.shape[0]
+    n_excluded = main_2d.shape[0] - n_sel
+    main_c, main_r, main_peak, main_core_sel = density_core(main_2d[core_sel])
+    main_core = np.zeros(main_2d.shape[0], dtype=bool)
+    main_core[core_sel] = main_core_sel
 
     print(f"\nBias correction  : margin={args.bias_margin}m  radius_percentile={pct:.0f}%")
     print(f"  main PLY        : {main_verts.shape[0]} pts  core={int(main_core.sum())} pts  "
           f"centroid=[{main_c[0]:.3f},{main_c[1]:.3f}]  r={main_r:.3f}m")
+    if n_excluded:
+        print(f"  main density grid: {n_excluded} pts outside r={effective_r + 0.15:.3f}m excluded "
+              f"from core estimation (kept in output)")
 
     result = []
     for verts, ply_label in filtered_others:
