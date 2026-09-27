@@ -120,6 +120,25 @@ CameraData/<project>/
 - 历史 bug（2026-09-13 修复）：`interpolate_cameras_circle.py` 曾用 `anchor_idx = d["id"]`。当 id 是 1-based 时**静默错位一台相机**（日志看起来完全正常，但 index 0 是 007 而不是 006）；id 稀疏时直接 `IndexError`。当前 LiteGS 产出的 `cameras.json` 恰好 `id == 数组下标`（21 个项目实测全部成立），所以修复前后输出**逐字节相同**。
 - 新脚本 `interpolate_cameras_swing.py` 从一开始就用 `enumerate`。日志同时打印 `array_index=` 和 `(file id=)` 便于对账。
 
+### 采样角与混合权重：`interpolate_cameras_circle.py` 的两处平滑性陷阱 ⚠️
+> 完整前后代码、实测数据、可复现验证方法见 `.claude/memory/interpolate-sampling-residual.md`。两条都必须记住：
+
+1. **采样角保持均匀，不要把某一帧 pin 到锚点角度上**（2026-09-27 修复）。旧代码做
+   ```python
+   sample_angles[0] = ang_a
+   idx_b = np.argmin(np.abs(sample_angles - ang_b_signed))
+   sample_angles[idx_b] = ang_b_signed   # ← 元凶
+   ```
+   把离锚点 B 最近的那个采样硬拽到 `ang_b` 上，于是**进入该帧的步长缩短、走出该帧的步长拉长，各最多半个步长**，表现为一圈里固定方位的**一帧顿挫**（`total` 越小越明显）。项目 06 实测（`total=160`，标称 2.25°/帧）：该处是 1.167° 然后 3.341°，即位移步长 −48%/+48.5%；去掉 pin 后降到 ±0.2%。
+   - **两个锚点都不需要 pin**：`np.linspace(ang_a, …)` 的第一个元素本来就精确等于 `ang_a`（第 0 帧天然精确）；锚点 B 也只是连续角度意义上的混合端点——半径 / 残差 / 内参全部是角度的函数，**不依赖有采样正好落在 `ang_b` 上**。`idx_b` 现在只用于日志。
+   - 改动是外科手术式的：**单看这一步**（只去 pin，不动残差），项目 06 上新旧 JSON **只有 `circle_0082` 那 1 帧不同**（移动 0.048 m / 1.07°），其余 159 帧逐字节相同。**不要**为了"让锚点精确落位"再把 pin 加回来。
+2. **半径 / 残差 / 内参三个混合必须共用同一个 `_wrap_progress()`（一圈里 0→1→0 的单峰），且残差里绝不能出现 `t % 1.0` 或 `t<=0.5` 这类分段**（2026-09-27 修复）。旧代码的残差用 `t % 1.0` 把进度折了两次，导致**一圈里残差走满 2 个来回（速率 2 倍）、方向反转 3 次，而且远锚点自己的 SfM 残差从未被应用**（项目 06 实测第 81 帧只走到 `res_b` 的 1.1%）。现在残差是单行 `_slerp(residual_a, residual_b, _wrap_progress(...))`——`frac` 在回程段自行下降，slerp 就自动从 b 回到 a，不需要第二个分支表达方向。
+   - 顺带把 `radius_at_angle` / 内参里各自复制粘贴的那两份同款映射合并到 `_wrap_progress`（合并后**位置与内参逐字节不变**）。**三份重复实现正是这个 bug 的温床，不要再加第四份。**
+   - 也**不要**照搬 `interpolate_cameras_swing.py` 的 `2.0 * _triangular(p)`：`tri(p)` 会把单峰折成双峰，远锚点处 `frac` 又退回 0。
+   - 残留量级：`_wrap_progress` 是线性三角形（C0），一圈仍有 2 个"角"（远锚点、接缝），约 1.1%（0.028°/帧 @ 基准 2.24°/帧、2.68 m 半径下 ≈0.4 mm/帧），**低于设计噪声，有意不改**；真需要时一行换成 `0.5*(1-cos(pi*p))` 即 C1。
+   - circle **不是闭环**（转一圈），接缝正好差 1 个步长（06 实测 0.099888 m / 2.2622°），把它循环播放会跳一下 —— 要闭环用 swing。
+
+
 ### 两条轨迹的起点锚点与帧数（`interpolate` preset 字段）
 - `anchor_camera` = **circle**（转一圈）的起始机位；`swing_anchor_camera` = **swing**（摆动）的起始机位。
 - `total` = **circle** 的帧数；`swing_total` = **swing** 的帧数（改大 = 摆动更慢更顺）。
@@ -165,4 +184,4 @@ CameraData/<project>/
 | `Docs/HANDOFF_2026-06-05.md` | 早期交接文档 |
 | `PIPELINE.md` | 旧 v1 管线说明 |
 
-*最后更新: 2026-09-13（新增 swing 轨迹与「已知缺口」小节）*
+*最后更新: 2026-09-27（circle 插值：采样角不再 pin 到远锚点、残差混合去掉 `t % 1.0`，消除一帧顿挫与 2 倍速率锯齿）*
