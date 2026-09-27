@@ -74,6 +74,32 @@ def angle_to_3d(a, r, center, u1, u2):
     return center + u1 * (r * np.cos(a)) + u2 * (r * np.sin(a))
 
 
+def _wrap_progress(a, ang_a, ang_b, span):
+    """Position of ``a`` within the [ang_a, ang_a + 2π) revolution.
+
+    ``0`` at the anchor, rising to ``1`` at the far anchor ``ang_b``, then
+    falling back to ``0`` around the rest of the circle.  Every angle-driven
+    blend (radius, residual, intrinsics) is defined as a function of this one
+    map, so they all agree about where the anchors are and all close with the
+    orbit instead of accumulating frame-to-frame state.
+
+    Mirrors ``interpolate_cameras_swing._wrap_progress`` — keep the two in step.
+    """
+    a_mod = (a - ang_a) % (2 * np.pi) + ang_a
+    if a_mod <= ang_b:
+        return (a_mod - ang_a) / span
+    return 1.0 - (a_mod - ang_b) / (2 * np.pi - span)
+
+
+def _slerp(ra, rb, frac):
+    """Shortest-arc slerp between two single rotations (frac in [0,1])."""
+    if frac <= 0.0:
+        return ra
+    if frac >= 1.0:
+        return rb
+    return Slerp([0.0, 1.0], Rotation.concatenate([ra, rb]))(frac)
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -246,27 +272,23 @@ def main():
         ang_b_signed = ang_a - (2 * np.pi - span)
     else:
         ang_b_signed = ang_b
+    # Keep this sampling UNIFORM.  Anchor A needs no help — linspace sets its
+    # first element to `ang_a` exactly — and the far anchor B is deliberately
+    # NOT snapped onto a sample.  Snapping the nearest sample onto ang_b
+    # shortens the step into that frame and lengthens the step out of it by the
+    # same amount (up to half a step each way), which reads as a one-frame
+    # stutter at a fixed position in the orbit: measured on project 06
+    # (N=160, 2.25°/frame nominal) at 1.167° then 3.341°.
+    # Nothing downstream needs a sample to land on ang_b: the radius, residual
+    # and intrinsics blends are all functions of the continuous angle.
+    # idx_b is therefore reported for the log only.
     sample_angles = np.linspace(ang_a, ang_a + dir_sign * 2 * np.pi, N, endpoint=False)
-    # ensure anchors land exactly at their positions
-    sample_angles[0] = ang_a
-    # find the closest sample to ang_b and pin it
-    idx_b = np.argmin(np.abs(sample_angles - ang_b_signed))
-    sample_angles[idx_b] = ang_b_signed
+    idx_b = int(np.argmin(np.abs(sample_angles - ang_b_signed)))
 
     # ----- per-sample radius (linear between r_a and r_b) ---------------
-    # radius at angle θ = r_a + (r_b - r_a) * (θ - ang_a) / (ang_b - ang_a)
-    # for the "other side" (θ > ang_b or θ < ang_a), wrap around
     def radius_at_angle(a):
-        # normalize a into [ang_a, ang_a + 2π)
-        a_mod = (a - ang_a) % (2 * np.pi) + ang_a
-        if a_mod <= ang_b:
-            t = (a_mod - ang_a) / span
-        else:
-            t = (a_mod - ang_b) / (2 * np.pi - span)
-            # going from r_b back to r_a
-            t = 1.0 - max(t, 0)  # smooth transition
-        t = max(0.0, min(1.0, t))
-        return r_a + t * (r_b - r_a)
+        p = _wrap_progress(a, ang_a, ang_b, span)
+        return r_a + max(0.0, min(1.0, p)) * (r_b - r_a)
 
     sample_radii = np.array([radius_at_angle(a) * scale for a in sample_angles])
 
@@ -307,24 +329,16 @@ def main():
         R_look = lookat_colmap(np.array(pos), center, world_up)
         rot_look = Rotation.from_matrix(R_look)
 
-        # how far are we between the two anchor angles?
-        # map a into [ang_a, ang_a+2π), compute fraction to ang_b
-        a_mod = (a - ang_a) % (2 * np.pi) + ang_a
-        if a_mod <= ang_b:
-            t = (a_mod - ang_a) / span
-        else:
-            t = 1.0 + (a_mod - ang_b) / (2 * np.pi - span)
-        t = t % 1.0  # wrap for full circle
-
-        # slerp the residual between the two anchor residuals
-        if t <= 0.5:
-            frac = t / 0.5  # 0→1 from anchor_a to anchor_b (via span)
-            slerp = Slerp([0, 1], Rotation.concatenate([residual_a, residual_b]))
-            residual = slerp(frac)
-        else:
-            frac = (t - 0.5) / 0.5  # 0→1 from anchor_b back to anchor_a
-            slerp = Slerp([0, 1], Rotation.concatenate([residual_b, residual_a]))
-            residual = slerp(frac)
+        # Residual blend: ONE 0→1→0 hump over the revolution — 0 at the anchor
+        # (its SfM pose is reproduced exactly), 1 at the far anchor (likewise),
+        # back to 0 at the seam.  Driven by the ANGLE only, so a pose is a pure
+        # function of where the camera is and nothing accumulates frame to
+        # frame.  _slerp(a→b, frac) already reverses on the return leg because
+        # frac falls there, so no second branch and no wrap are needed — the
+        # previous `t % 1.0` restarted the blend at the far anchor and made the
+        # residual advance 2x as fast, with extra direction reversals.
+        frac = _wrap_progress(a, ang_a, ang_b, span)
+        residual = _slerp(residual_a, residual_b, frac)
 
         rot = rot_look * residual
         sample_rots.append(rot.as_matrix())
@@ -342,21 +356,13 @@ def main():
     w_a, h_a = anchor_a["width"], anchor_a["height"]
     w_b, h_b = anchor_b["width"], anchor_b["height"]
 
-    def interp_linear(a_mod):
-        if a_mod <= ang_b:
-            t = (a_mod - ang_a) / span
-        else:
-            t = 1.0 - (a_mod - ang_b) / (2 * np.pi - span)
-        t = max(0.0, min(1.0, t))
-        return t
-
     sample_fx = []
     sample_fy = []
     sample_w = []
     sample_h = []
     for a in sample_angles:
-        a_mod = (a - ang_a) % (2 * np.pi) + ang_a
-        t = interp_linear(a_mod)
+        # same 0→1→0 map as the radius and the residual (anchors exact)
+        t = _wrap_progress(a, ang_a, ang_b, span)
         sample_fx.append(fx_a + t * (fx_b - fx_a))
         sample_fy.append(fy_a + t * (fy_b - fy_a))
         sample_w.append(w_a + t * (w_b - w_a))
@@ -387,8 +393,9 @@ def main():
         json.dump(output, f, indent=2)
 
     print(f"Output          : {len(output)} poses → {output_path}")
-    print(f"Anchors         : id=0 → angle {ang_a:.4f}  "
-          f"id={idx_b} → angle {sample_angles[idx_b]:.4f} "
+    print(f"Anchors         : idx=0 → angle {ang_a:.4f} (exact)  "
+          f"far anchor angle {ang_b_signed:.4f} not pinned; nearest sample "
+          f"idx={idx_b} → {sample_angles[idx_b]:.4f} "
           f"(gap {np.degrees(best_dist):.1f}°)")
 
 

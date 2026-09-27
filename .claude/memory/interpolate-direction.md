@@ -67,3 +67,5 @@ fuse_server 只有**两处** preset 编辑 UI（无第三处）：
 - `tills/interpolate_cameras_circle.py` —— **旧副本**，v1 管线 `run_pipeline.py` 还在用，**未同步** `--direction`
 - `tills/bridge_interpolate.py` —— v2 UE 桥接，自带显式 `--direction cw|ccw`（与圆插值无关，别混）
 - `tills_ply/ply_utils.py::fit_circle` —— fuse/clip 用的同款圆拟合（方向与插值共享同一 SVD 机制）
+
+**平滑性缺陷另见** [interpolate-sampling-residual.md](interpolate-sampling-residual.md)：同一个脚本里采样角被 pin 到远锚点（一帧顿挫）与残差混合锯齿（2026-09-27 修复）。该文里的"旧副本 `tills/` 未同步"同样适用于本次修复。

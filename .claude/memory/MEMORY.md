@@ -3,5 +3,6 @@
 - [Pipeline v4](pipeline-v4.md) — run_pipeline_v4.py: 扁平图像 → 实拍+渲染混合 MP4（保留独立运行）
 - [PLY Pipeline](ply-pipeline.md) — tills_ply/ply_pipeline.py: interpolate → fuse → clip 三步 PLY 处理
 - [插值圆方向](interpolate-direction.md) — camera_align.json 环绕方向决定机制 + --direction auto/same/opposite 参数（2026-08 新增）
+- [插值采样与残差的两处抖动](interpolate-sampling-residual.md) — circle 插值固定方位的一帧顿挫（采样角 pin 到远锚点）+ 残差混合锯齿/2 倍速率（2026-09-27 修复）
 - [fuse_server.py CSS 调试陷阱](fuse-server-css-gotchas.md) — _CSS 双花括号导致规则静默失效；input[type=number] 不认 size 属性
 - [fuse bias 网格 int32 溢出](fuse-bias-grid-overflow.md) — main PLY 离群点撑爆密度网格包围盒 → np.bincount 报负值；int64 + 核心估计前裁离群点（2026-09-14 修复）
