@@ -1,0 +1,82 @@
+diff --git a/src/camera-manager.ts b/src/camera-manager.ts
+index f78a11f..bb69b6e 100644
+--- a/src/camera-manager.ts
++++ b/src/camera-manager.ts
+@@ -15,7 +15,7 @@ import { WalkSource } from './cameras/walk-source';
+ import type { Collision } from './collision';
+ import { easeOut } from './core/math';
+ import { DEFAULT_CAMERA_FOV } from './schemas/defaults';
+-import type { Annotation } from './settings';
++import type { Annotation, AnimTrack } from './settings';
+ import type { CameraMode, Global } from './types';
+ 
+ const tmpCamera = new Camera();
+@@ -102,6 +102,13 @@ class CameraManager {
+     // and the mode the camera falls back to when an animation is interrupted.
+     setCollision: (collision: Collision | null) => void;
+ 
++    /**
++     * Replace the camera animation track at runtime (e.g. after importing a cameras.json),
++     * and optionally start playing it. Pass null to remove the animation. Requires the viewer
++     * to have loaded; does nothing when an animated splat sequence owns the timeline.
++     */
++    setAnimation: (track: AnimTrack | null, autoplay?: boolean) => void;
++
+     // Whether the start camera is outside the scene bounds: an object to orbit rather than a
+     // scene to be in. XR holds and grabs the splat by the same test
+     readonly isObjectExperience: boolean;
+@@ -410,6 +417,54 @@ class CameraManager {
+             state.animationTime = controllers.anim.animState.cursor.value;
+         };
+ 
++        // replace the camera animation track at runtime (cameras.json import)
++        this.setAnimation = (track, autoplay = true) => {
++            // an animated splat sequence owns the timeline; a camera track cannot play
++            // alongside it
++            if (state.hasSequence) {
++                return;
++            }
++
++            controllers.anim = track ? new AnimController(track) : null;
++            const anim = controllers.anim;
++
++            state.hasAnimation = !!anim;
++            state.animationDuration = anim ? anim.animState.cursor.duration : 0;
++            state.animationTime = 0;
++
++            if (!anim) {
++                // removing the animation: fall back to a mode that can exist
++                if (state.cameraMode === 'anim') {
++                    const fallback = isObjectExperience ? 'orbit' : walkAllowed ? 'walk' : 'fly';
++                    state.cameraMode = fallback;
++                    getController(fallback).onEnter(this.camera);
++                    target.copy(this.camera);
++                    transitionTimer = 1;
++                }
++                global.app.renderNextFrame = true;
++                return;
++            }
++
++            // park the new track on its first frame
++            anim.animState.cursor.value = 0;
++            anim.animState.update(0);
++
++            if (state.cameraMode !== 'anim') {
++                // this enters the controller and starts a transition; snap below
++                state.cameraMode = 'anim';
++            }
++            anim.onEnter(this.camera);
++            target.copy(this.camera);
++            transitionTimer = 1;
++
++            state.animationPaused = !autoplay;
++            global.app.renderNextFrame = true;
++        };
++
++        events.on('cameraAnimation:set', (track: AnimTrack | null, autoplay = true) => {
++            this.setAnimation(track, autoplay);
++        });
++
+         // handle user picking in the scene
+         events.on('pick', (position: Vec3) => {
+             // switch to orbit camera on pick
