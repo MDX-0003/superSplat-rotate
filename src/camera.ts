@@ -100,6 +100,7 @@ class Camera extends Element {
     mainPass: RenderPassForward;
     splatPass: RenderPassForward;
     gizmoPass: RenderPassForward;
+    overlayPass: RenderPassForward;
     finalPass: SimpleRenderPass;
 
     // overridden target size
@@ -110,6 +111,10 @@ class Camera extends Element {
     poseRotation: Quat | null = null;
 
     renderOverlays = true;
+
+    // gates the splat centers overlay independently of the other overlays so
+    // exports can request centers without also drawing the grid and gizmos
+    renderCenters = true;
 
     updateCameraUniforms: () => void;
 
@@ -332,7 +337,8 @@ class Camera extends Element {
         this.mainCamera.camera.layers = [
             scene.worldLayer.id,
             scene.splatLayer.id,
-            scene.gizmoLayer.id
+            scene.gizmoLayer.id,
+            scene.overlayLayer.id
         ];
 
         // use manual aspect ratio mode so we can set it based on targetSize
@@ -348,6 +354,7 @@ class Camera extends Element {
         this.mainPass = new RenderPassForward(device, composition, app.scene, renderer);
         this.splatPass = new RenderPassForward(device, composition, app.scene, renderer);
         this.gizmoPass = new RenderPassForward(device, composition, app.scene, renderer);
+        this.overlayPass = new RenderPassForward(device, composition, app.scene, renderer);
         this.finalPass = new SimpleRenderPass(device,
             new ShaderQuad(device, vertexShader, fragmentShader, 'final-blit'), {
                 vars: () => {
@@ -461,6 +468,7 @@ class Camera extends Element {
         this.mainPass?.destroy();
         this.splatPass?.destroy();
         this.gizmoPass?.destroy();
+        this.overlayPass?.destroy();
         this.finalPass?.destroy();
         this.camera.framePasses = null;
 
@@ -581,10 +589,15 @@ class Camera extends Element {
             this.gizmoPass.renderActions[0].clearDepth = true;
             this.gizmoPass.renderActions[0].clearStencil = true;
 
+            // configure overlay pass - splat centers, independent of the gizmo layer
+            this.overlayPass.init(this.mainTarget);
+            this.overlayPass.addLayer(this.camera, scene.overlayLayer, false, false);
+            this.overlayPass.addLayer(this.camera, scene.overlayLayer, true, false);
+
             this.finalPass.init(null);
 
             // assign render passes to camera
-            this.camera.framePasses = [this.clearPass, this.mainPass, this.splatPass, this.gizmoPass, this.finalPass];
+            this.camera.framePasses = [this.clearPass, this.mainPass, this.splatPass, this.gizmoPass, this.overlayPass, this.finalPass];
         } else {
             // resize existing render targets
             const { splatTarget, colorTarget, workTarget } = this;

@@ -73,7 +73,7 @@ class SplatOverlay extends Element {
         this.entity = new Entity('splatOverlay');
         this.entity.addComponent('render', {
             meshInstances: [this.meshInstance],
-            layers: [scene.gizmoLayer.id]
+            layers: [scene.overlayLayer.id]
         });
 
         scene.events.on('selection.changed', (selection: Splat) => {
@@ -180,7 +180,7 @@ class SplatOverlay extends Element {
         const { events } = scene;
         return splat &&
             events.invoke('camera.splatSize') > 0 &&
-            scene.camera.renderOverlays &&
+            scene.camera.renderCenters &&
             events.invoke('camera.overlay') &&
             events.invoke('camera.mode') === 'centers';
     }

@@ -218,6 +218,14 @@ class VideoSettingsDialog extends Container {
         showDebugRow.append(showDebugLabel);
         showDebugRow.append(showDebugBoolean);
 
+        // centers overlay
+
+        const centersOverlayLabel = new Label({ class: 'label', text: localize('popup.render-video.centers-overlay') });
+        const centersOverlayBoolean = new BooleanInput({ class: 'boolean', value: false });
+        const centersOverlayRow = new Container({ class: 'row' });
+        centersOverlayRow.append(centersOverlayLabel);
+        centersOverlayRow.append(centersOverlayBoolean);
+
         // content
 
         const content = new Container({ id: 'content' });
@@ -230,6 +238,7 @@ class VideoSettingsDialog extends Container {
         content.append(portraitRow);
         content.append(transparentBgRow);
         content.append(showDebugRow);
+        content.append(centersOverlayRow);
 
         // footer
 
@@ -356,6 +365,7 @@ class VideoSettingsDialog extends Container {
                         bitrate,
                         transparentBg: transparentBgBoolean.value,
                         showDebug: showDebugBoolean.value,
+                        centersOverlay: centersOverlayBoolean.value,
                         format: formatSelect.value as 'mp4' | 'webm' | 'mov' | 'mkv',
                         codec: codecSelect.value as 'h264' | 'h265' | 'vp9' | 'av1'
                     };

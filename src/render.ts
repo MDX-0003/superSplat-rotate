@@ -45,6 +45,8 @@ type VideoSettings = {
     bitrate: number;
     transparentBg: boolean;
     showDebug: boolean;
+    /** Draw the splat centers overlay (gaussian colors) into the rendered video. */
+    centersOverlay?: boolean;
     format: 'mp4' | 'webm' | 'mov' | 'mkv';
     codec: 'h264' | 'h265' | 'vp9' | 'av1';
     /** Optional: switch-before frame numbers for multi-PLY segmented rendering.
@@ -90,6 +92,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.startOffscreenMode(width, height);
             scene.camera.renderOverlays = false;
             scene.gizmoLayer.enabled = false;
+            scene.overlayLayer.enabled = false;
 
             // render the next frame
             scene.forceRender = true;
@@ -120,6 +123,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.endOffscreenMode();
             scene.camera.renderOverlays = true;
             scene.gizmoLayer.enabled = true;
+            scene.overlayLayer.enabled = true;
             scene.camera.camera.clearColor.set(0, 0, 0, 0);
         }
     });
@@ -135,6 +139,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.startOffscreenMode(width, height);
             scene.camera.renderOverlays = showDebug;
             scene.gizmoLayer.enabled = false;
+            scene.overlayLayer.enabled = false;
             if (!transparentBg) {
                 scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
             }
@@ -184,6 +189,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             scene.camera.endOffscreenMode();
             scene.camera.renderOverlays = true;
             scene.gizmoLayer.enabled = true;
+            scene.overlayLayer.enabled = true;
             scene.camera.clearPass.setClearColor(nullClr);
 
             events.fire('stopSpinner');
@@ -205,6 +211,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.startOffscreenMode(width, height);
                 scene.camera.renderOverlays = false;
                 scene.gizmoLayer.enabled = false;
+                scene.overlayLayer.enabled = false;
                 scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
                 scene.lockedRenderMode = true;
 
@@ -268,6 +275,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.endOffscreenMode();
                 scene.camera.renderOverlays = true;
                 scene.gizmoLayer.enabled = true;
+                scene.overlayLayer.enabled = true;
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.forceRender = true;
             }
@@ -299,6 +307,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.startOffscreenMode(width, height);
                 scene.camera.renderOverlays = showDebug;
                 scene.gizmoLayer.enabled = false;
+                scene.overlayLayer.enabled = false;
                 if (!transparentBg) {
                     scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
                 }
@@ -398,6 +407,7 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.endOffscreenMode();
                 scene.camera.renderOverlays = true;
                 scene.gizmoLayer.enabled = true;
+                scene.overlayLayer.enabled = true;
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.lockedRenderMode = false;
                 scene.forceRender = true;
@@ -428,10 +438,15 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             const segmentSplats: Splat[] = [];
             let lastActiveSegment = -1;
 
+            // centers overlay state (hoisted so finally can restore it)
+            const prevMode = events.invoke('camera.mode') as string;
+            const prevOverlay = events.invoke('camera.overlay') as boolean;
+            const prevUseGaussianColor = events.invoke('view.centersUseGaussianColor') as boolean;
+
             try {
                 const settings = videoSettings;
                 plySegments = settings.plySegments;
-                const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, format, codec: codecChoice } = settings;
+                const { startFrame, endFrame, frameRate, width, height, bitrate, transparentBg, showDebug, centersOverlay, format, codec: codecChoice } = settings;
 
                 // ── collect splats in upload order ──
                 if (plySegments && plySegments.length > 0) {
@@ -487,6 +502,14 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.startOffscreenMode(width, height);
                 scene.camera.renderOverlays = showDebug;
                 scene.gizmoLayer.enabled = false;
+                if (centersOverlay) {
+                    // the centers path draws through the overlay layer; force the
+                    // editor state it depends on for the duration of the export
+                    events.fire('camera.setMode', 'centers');
+                    events.fire('camera.setOverlay', true);
+                    events.fire('view.setCentersUseGaussianColor', true);
+                }
+                scene.overlayLayer.enabled = !!centersOverlay;
                 if (!transparentBg) {
                     scene.camera.clearPass.setClearColor(events.invoke('bgClr'));
                 }
@@ -680,6 +703,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.endOffscreenMode();
                 scene.camera.renderOverlays = true;
                 scene.gizmoLayer.enabled = true;
+                scene.overlayLayer.enabled = true;
+                events.fire('camera.setMode', prevMode);
+                events.fire('camera.setOverlay', prevOverlay);
+                events.fire('view.setCentersUseGaussianColor', prevUseGaussianColor);
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.lockedRenderMode = false;
                 scene.forceRender = true;       // camera likely moved, finish with normal render

@@ -665,6 +665,12 @@ class ViewPanel extends Container {
 
         centersColorToggle.on('change', (value: boolean) => {
             events.fire('view.setCentersUseGaussianColor', value);
+            // enabling color centers selects the centers render path itself,
+            // so it is visible without touching the overlay toggle first
+            if (value) {
+                events.fire('camera.setOverlay', true);
+                events.fire('camera.setMode', 'centers');
+            }
         });
 
         // camera speed
