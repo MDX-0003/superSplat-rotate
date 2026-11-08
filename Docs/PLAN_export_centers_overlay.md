@@ -51,26 +51,32 @@
 - `src/scene.ts` 新增 `overlayLayer`（`new Layer({ name: 'SplatOverlay' })`），在 `gizmoLayer` 之后 push。
 - `src/camera.ts:332-336` 的 `mainCamera.camera.layers` 加入 `scene.overlayLayer.id`。
 - `src/splat-overlay.ts` 的实体层从 `gizmoLayer` 改为 `overlayLayer`。
-- 新增一个独立的可见性标志（建议放在 `Camera` 上，例如 `renderCenters = true`），让 `SplatOverlay.enabled` 用它替代 `scene.camera.renderOverlays`。
+- `src/camera.ts` 新增独立的 `overlayPass`。渲染通道是显式枚举图层的（`mainPass`、`splatPass`、`gizmoPass` 各自 `addLayer`），仅把实体移到新层不足以让它被绘制；`overlayPass` 在 `gizmoPass` 之后执行，只包含 `overlayLayer`。
+- 新增一个独立的可见性标志 `Camera.renderCenters`，让 `SplatOverlay.enabled` 用它替代 `scene.camera.renderOverlays`。
 - 这样导出时关闭 gizmo 层不会影响中心点，而网格与相机位姿 gizmo 仍然只受 `renderOverlays` 控制。
 
 ### 3. 导出参数与 UI
 
-新增导出字段 `centersOverlay: boolean`，默认 `false`。
+只在“左上角 渲染 → 视频”这条路径增加选项，其余导出路径只屏蔽 overlay 层，不增加 UI。
 
-- `src/render.ts` 的 `ImageSettings`、`VideoSettings` 增加该字段；`render.batchGtCameras` 增加同名参数。
-- `src/ui/image-settings-dialog.ts`、`src/ui/video-settings-dialog.ts` 各增加一个 `BooleanInput`，标签建议为“中心点叠加（高斯颜色）”。
-- GT 相机导出区域（`src/ui/view-panel.ts:949-956` 附近）增加同样的 `BooleanInput`，并把值传给 `render.batchGtCameras`。
-- `src/ui/editor.ts` 与 `src/ui/export-popup.ts` 把新字段一路透传。
+新增 `VideoSettings.centersOverlay: boolean`，默认 `false`。
+
+- `src/render.ts` 的 `VideoSettings` 增加该字段。
+- `src/ui/video-settings-dialog.ts` 增加一个 `BooleanInput`，标签是 `popup.render-video.centers-overlay`，中文为“中心点叠加（高斯颜色）”。
+- `static/locales/en.json` 与 `static/locales/zh-CN.json` 增加对应文案，其余语言回退到英文。
 
 导出开始时：
 
 - 保存当前 `camera.mode`、`camera.overlay`、`view.centersUseGaussianColor`。
 - 若 `centersOverlay` 为真，临时设置为 `centers`、`true`、`true`。
-- 设置 `scene.overlayLayer.enabled = centersOverlay` 与 `camera.renderCenters = centersOverlay`。
+- 设置 `scene.overlayLayer.enabled = centersOverlay`。
 - 在 `finally` 中恢复所有状态与层开关。
 
 `renderOverlays` 仍按 `showDebug` 处理，确保不把网格和相机 gizmo 带进导出画面。
+
+### 3.1 其它导出路径
+
+`render.offscreen`、`render.image`、`render.imageSequence`、`render.batchGtCameras` 保持原有输出，只新增 `scene.overlayLayer.enabled = false`，并在 `finally` 中恢复为 `true`，避免中心点因为换层而意外进入这些导出。
 
 ### 4. 持久化“颜色中心”状态
 
@@ -91,5 +97,15 @@
 ## 风险与待确认
 
 - 导出开关只提供“高斯颜色 + overlay”这一种叠加；不导出蓝色中心。如果也要蓝色中心，需要把导出开关改成三态。
-- 中心点大小目前是 `camera.splatSize * devicePixelRatio`（`src/splat-overlay.ts:166`），不随导出分辨率缩放。4K 导出时点会显得很小，是否按导出分辨率放大需要定。
+- 中心点大小保持现有逻辑 `camera.splatSize * devicePixelRatio`（`src/splat-overlay.ts:166`），不随导出分辨率缩放，已确认按此实现。
 - 导出期间临时修改 `camera.mode` 等全局状态，必须严格在 `finally` 中恢复，否则退出导出后视口状态会被污染。
+- 中心点只挂在当前选中的 splat 上。单 PLY 场景默认加载后即被选中，若用户手动取消选择，导出不会有中心点。
+
+## 验证记录
+
+- `npx tsc --noEmit -p tsconfig.json` 通过。
+- `npm run build:raw` 通过。
+- 实测导入 `CameraData/05/cameras.json` 与 `CameraData/05-clip/0630-120849.ply`，打开“颜色中心”后自动切到 centers 模式并打开叠加层。
+- 实测导出 320x180、3 帧视频：`centersOverlay: true` 时画面出现高斯颜色点，`centersOverlay: false` 时与正常渲染一致；两帧 PSNR 约 20.6 dB，确认输出不同。
+- 实测导出结束后 `camera.mode`、`camera.overlay`、`centersUseGaussianColor` 与层开关均恢复。
+- 实测 `docSerialize.view` 包含 `centersUseGaussianColor`，`docDeserialize.view` 能回填。
