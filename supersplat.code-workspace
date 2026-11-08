@@ -13,5 +13,8 @@
 			"path": "../SAGS"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"notebook.globalToolbar": false,
+		"notebook.insertToolbarLocation": "hidden"
+	}
 }

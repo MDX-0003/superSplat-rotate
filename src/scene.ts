@@ -76,6 +76,7 @@ class Scene {
     worldLayer: Layer;
     splatLayer: Layer;
     gizmoLayer: Layer;
+    overlayLayer: Layer;
     sceneState = [new SceneState(), new SceneState()];
     elements: Element[] = [];
     boundStorage = new BoundingBox();
@@ -205,9 +206,14 @@ class Scene {
         // gizmo layer
         this.gizmoLayer = new Layer({ name: 'Gizmo' });
 
+        // splat overlay layer - drawn after the gizmos so the centers render
+        // independently of gizmo visibility (exports keep gizmos off)
+        this.overlayLayer = new Layer({ name: 'SplatOverlay' });
+
         const layers = this.app.scene.layers;
         layers.push(this.splatLayer);
         layers.push(this.gizmoLayer);
+        layers.push(this.overlayLayer);
 
         this.dataProcessor = new DataProcessor(this.app.graphicsDevice);
         this.assetLoader = new AssetLoader(this.app, events);

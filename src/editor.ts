@@ -803,6 +803,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
             lockedColor: packC(events.invoke('lockedClr')),
             shBands: events.invoke('view.bands'),
             centersSize: events.invoke('camera.splatSize'),
+            centersUseGaussianColor: events.invoke('view.centersUseGaussianColor'),
             outlineSelection: events.invoke('view.outlineSelection'),
             showGrid: events.invoke('grid.visible'),
             showBound: events.invoke('camera.bound'),
@@ -819,6 +820,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         events.fire('setLockedClr', new Color(docView.lockedColor));
         events.fire('view.setBands', docView.shBands);
         events.fire('camera.setSplatSize', docView.centersSize);
+        events.fire('view.setCentersUseGaussianColor', docView.centersUseGaussianColor ?? false);
         events.fire('view.setOutlineSelection', docView.outlineSelection);
         events.fire('grid.setVisible', docView.showGrid);
         events.fire('camera.setBound', docView.showBound);
