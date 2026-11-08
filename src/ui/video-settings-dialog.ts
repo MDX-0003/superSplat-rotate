@@ -284,6 +284,11 @@ class VideoSettingsDialog extends Container {
             const totalFrames = events.invoke('timeline.frames');
             frameRangeInput.max = totalFrames - 1;
             frameRangeInput.value = [0, totalFrames - 1];
+
+            // default the master switch to whether the preview currently shows centers
+            centersOverlayBoolean.value =
+                events.invoke('camera.mode') === 'centers' &&
+                events.invoke('camera.overlay');
         };
 
         // function implementations

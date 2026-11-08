@@ -163,7 +163,7 @@
     "popup.render-video.portrait": "纵向模式",
     "popup.render-video.transparent-bg": "透明背景",
     "popup.render-video.show-debug": "显示调试覆盖",
-    "popup.render-video.centers-overlay": "中心点叠加（高斯颜色）",
+    "popup.render-video.centers-overlay": "中心点叠加",
     "popup.shortcuts.title": "键盘快捷键",
     "popup.shortcuts.navigation": "导航",
     "popup.shortcuts.tools": "工具",

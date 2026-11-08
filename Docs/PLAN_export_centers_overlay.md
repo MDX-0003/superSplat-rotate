@@ -59,18 +59,24 @@
 
 只在“左上角 渲染 → 视频”这条路径增加选项，其余导出路径只屏蔽 overlay 层，不增加 UI。
 
-新增 `VideoSettings.centersOverlay: boolean`，默认 `false`。
+新增 `VideoSettings.centersOverlay: boolean`，默认 `false`。它是显示总开关：只决定中心点这一层是否进入导出画面，不决定颜色和大小。
 
 - `src/render.ts` 的 `VideoSettings` 增加该字段。
-- `src/ui/video-settings-dialog.ts` 增加一个 `BooleanInput`，标签是 `popup.render-video.centers-overlay`，中文为“中心点叠加（高斯颜色）”。
+- `src/ui/video-settings-dialog.ts` 增加一个 `BooleanInput`，标签是 `popup.render-video.centers-overlay`，中文为“中心点叠加”。
+- 打开对话框时，该开关默认取预览当前是否正在显示中心点：`camera.mode === 'centers' && camera.overlay`。
 - `static/locales/en.json` 与 `static/locales/zh-CN.json` 增加对应文案，其余语言回退到英文。
+
+颜色模式与中心大小完全沿用预览状态，导出不覆盖：
+
+- `view.centersUseGaussianColor` 不修改，预览是蓝色中心就导出蓝色中心，预览是颜色中心就导出颜色中心。
+- `camera.splatSize` 不修改，导出使用预览的“中心大小”。
 
 导出开始时：
 
-- 保存当前 `camera.mode`、`camera.overlay`、`view.centersUseGaussianColor`。
-- 若 `centersOverlay` 为真，临时设置为 `centers`、`true`、`true`。
+- 保存当前 `camera.mode` 与 `camera.overlay`。
+- 若总开关为真，临时设置为 `centers` 与 `true`，让 centers 路径可用于导出。
 - 设置 `scene.overlayLayer.enabled = centersOverlay`。
-- 在 `finally` 中恢复所有状态与层开关。
+- 在 `finally` 中恢复 `camera.mode` 与 `camera.overlay`，并恢复层开关。
 
 `renderOverlays` 仍按 `showDebug` 处理，确保不把网格和相机 gizmo 带进导出画面。
 
@@ -96,7 +102,7 @@
 
 ## 风险与待确认
 
-- 导出开关只提供“高斯颜色 + overlay”这一种叠加；不导出蓝色中心。如果也要蓝色中心，需要把导出开关改成三态。
+- 总开关只管显示与不显示，颜色由预览决定。预览是蓝色中心时导出也是蓝色中心；需要颜色中心就在预览里打开“颜色中心”。
 - 中心点大小保持现有逻辑 `camera.splatSize * devicePixelRatio`（`src/splat-overlay.ts:166`），不随导出分辨率缩放，已确认按此实现。
 - 导出期间临时修改 `camera.mode` 等全局状态，必须严格在 `finally` 中恢复，否则退出导出后视口状态会被污染。
 - 中心点只挂在当前选中的 splat 上。单 PLY 场景默认加载后即被选中，若用户手动取消选择，导出不会有中心点。
@@ -106,6 +112,7 @@
 - `npx tsc --noEmit -p tsconfig.json` 通过。
 - `npm run build:raw` 通过。
 - 实测导入 `CameraData/05/cameras.json` 与 `CameraData/05-clip/0630-120849.ply`，打开“颜色中心”后自动切到 centers 模式并打开叠加层。
-- 实测导出 320x180、3 帧视频：`centersOverlay: true` 时画面出现高斯颜色点，`centersOverlay: false` 时与正常渲染一致；两帧 PSNR 约 20.6 dB，确认输出不同。
-- 实测导出结束后 `camera.mode`、`camera.overlay`、`centersUseGaussianColor` 与层开关均恢复。
+- 实测预览显示中心点时打开视频设置，“中心点叠加（高斯颜色）”默认勾选；预览关闭叠加层时默认不勾选。
+- 实测导出 1280x720、3 帧视频，预览颜色中心关闭时，导出画面是蓝色中心点；预览颜色中心打开时，导出画面使用高斯颜色。两张导出帧 PSNR 约 13.6 dB，确认颜色模式按预览生效。
+- 实测导出期间未修改 `view.centersUseGaussianColor` 与 `camera.splatSize`，导出结束后 `camera.mode`、`camera.overlay` 和层开关均恢复。
 - 实测 `docSerialize.view` 包含 `centersUseGaussianColor`，`docDeserialize.view` 能回填。

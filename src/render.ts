@@ -438,10 +438,12 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
             const segmentSplats: Splat[] = [];
             let lastActiveSegment = -1;
 
-            // centers overlay state (hoisted so finally can restore it)
+            // centers overlay state (hoisted so finally can restore it).
+            // Color mode and center size are preview state and are never
+            // overridden by the export; only the master switch controls whether
+            // the overlay layer is drawn at all.
             const prevMode = events.invoke('camera.mode') as string;
             const prevOverlay = events.invoke('camera.overlay') as boolean;
-            const prevUseGaussianColor = events.invoke('view.centersUseGaussianColor') as boolean;
 
             try {
                 const settings = videoSettings;
@@ -503,11 +505,10 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.camera.renderOverlays = showDebug;
                 scene.gizmoLayer.enabled = false;
                 if (centersOverlay) {
-                    // the centers path draws through the overlay layer; force the
-                    // editor state it depends on for the duration of the export
+                    // the master switch selects the centers render path for the
+                    // export; its color mode and center size stay as previewed
                     events.fire('camera.setMode', 'centers');
                     events.fire('camera.setOverlay', true);
-                    events.fire('view.setCentersUseGaussianColor', true);
                 }
                 scene.overlayLayer.enabled = !!centersOverlay;
                 if (!transparentBg) {
@@ -706,7 +707,6 @@ const registerRenderEvents = (scene: Scene, events: Events) => {
                 scene.overlayLayer.enabled = true;
                 events.fire('camera.setMode', prevMode);
                 events.fire('camera.setOverlay', prevOverlay);
-                events.fire('view.setCentersUseGaussianColor', prevUseGaussianColor);
                 scene.camera.clearPass.setClearColor(nullClr);
                 scene.lockedRenderMode = false;
                 scene.forceRender = true;       // camera likely moved, finish with normal render
